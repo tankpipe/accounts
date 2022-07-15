@@ -1,0 +1,70 @@
+{   
+    "accounts": {
+      "44742ea3-f835-4267-b62e-0c1d4796d575": {
+        "id": "44742ea3-f835-4267-b62e-0c1d4796d575",
+        "name": "Savings Account 1",
+        "account_type": "Debit",
+        "balance": "0",
+        "starting_balance": "0"
+      },
+      "66ac7995-4991-495a-b44e-d9882d579260": {
+        "id": "66ac7995-4991-495a-b44e-d9882d579260",
+        "name": "Credit Account 1",
+        "account_type": "Credit",
+        "balance": "0",
+        "starting_balance": "0"
+      }
+    },
+    "scheduled_transactions": [
+      {
+        "id": "8565ba58-2df8-4690-b4f1-7849b2b4b48f",
+        "name": "Some income",
+        "period": "Months",
+        "frequency": 1,
+        "start_date": "2022-06-04",
+        "last_date": "2022-06-04",
+        "amount": "200",
+        "description": "Money in",
+        "dr_account_id": "cb946148-79b0-43bc-a3b8-b8bd811aa1ad",
+        "cr_account_id": "c77327ef-d27d-434c-a205-2e975e822c87"
+      }
+    ],
+    "transactions": [
+      {
+        "id": "4ed6200e-4d96-4c40-b140-36de0cfc7bc8",
+        "date": "2022-06-04",
+        "description": "received moneys",
+        "dr_account_id": "44742ea3-f835-4267-b62e-0c1d4796d575",
+        "cr_account_id": "66ac7995-4991-495a-b44e-d9882d579260",
+        "amount": "10000",
+        "status": "Recorded"
+      },
+      {
+        "id": "f70e1b5d-12ee-47b0-9fbb-ab7671ff4595",
+        "date": "2022-06-05",
+        "description": "Gave some moneys back",
+        "dr_account_id": "66ac7995-4991-495a-b44e-d9882d579260",
+        "cr_account_id": "44742ea3-f835-4267-b62e-0c1d4796d575",
+        "amount": "98.99",
+        "status": "Recorded"
+      },
+      {
+        "id": "4ed6200e-4d96-4c40-b140-36de0cfc7bc9",
+        "date": "2022-07-01",
+        "description": "received more moneys",
+        "dr_account_id": "44742ea3-f835-4267-b62e-0c1d4796d575",
+        "cr_account_id": "66ac7995-4991-495a-b44e-d9882d579260",
+        "amount": "250",
+        "status": "Recorded"
+      },
+      {
+        "id": "4ed6200e-4d96-4c40-b140-36de0cfc7bd1",
+        "date": "2022-07-01",
+        "description": "received more moneys",
+        "dr_account_id": "44742ea3-f835-4267-b62e-0c1d4796d575",
+        "cr_account_id": null,
+        "amount": "150.45",
+        "status": "Recorded"
+      }
+    ]
+  }
