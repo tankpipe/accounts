@@ -1,11 +1,12 @@
-use chrono::NaiveDate;
+use chrono::{NaiveDate, ParseError};
 use serde::{Deserializer, Serializer, Deserialize};
 
 pub fn deserialize_naivedate<'de, D>(deserializer: D) -> Result<NaiveDate, D::Error>
     where D: Deserializer<'de>
 {
     let date = String::deserialize(deserializer)?;
-    Ok(parse_date_str(&date))
+    use serde::de::Error;
+    parse_date_str(&date).map_err(Error::custom)
 }
 
 pub fn serialize_naivedate<S>(date: &NaiveDate, serializer: S) -> Result<S::Ok, S::Error>
@@ -14,6 +15,6 @@ pub fn serialize_naivedate<S>(date: &NaiveDate, serializer: S) -> Result<S::Ok, 
     serializer.serialize_some(&date.to_string())
 }
 
-fn parse_date_str(date_str: &String) -> NaiveDate {
-    NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").unwrap()
+fn parse_date_str(date_str: &String) -> Result<NaiveDate, ParseError> {
+    NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
 }
