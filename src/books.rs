@@ -48,6 +48,30 @@ impl Books {
         Ok(())            
     }
 
+    pub fn update_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
+
+        if !self.valid_account_id(transaction.dr_account_id) {
+            return Err(BooksError::from_str("Invalid DR account"))    
+        }
+
+        if !self.valid_account_id(transaction.cr_account_id) {
+            return Err(BooksError::from_str("Invalid CR account"))    
+        }
+
+        if transaction.dr_account_id.is_none() && transaction.cr_account_id.is_none() {
+            return Err(BooksError::from_str("A transaction must have at least one account"))    
+        }
+        
+        if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
+            let _old = std::mem::replace(&mut self.transactions[index], transaction);
+            Ok(())          
+        } else {
+            Err(BooksError { error: "Transaction not found".to_string() })        
+        }
+
+        
+    }
+
     pub fn transactions(&self) -> &[Transaction] {
         self.transactions.as_slice()
     }
