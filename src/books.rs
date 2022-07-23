@@ -32,34 +32,31 @@ impl Books {
     
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
 
-        if !self.valid_account_id(transaction.dr_account_id) {
-            return Err(BooksError::from_str("Invalid DR account"))    
-        }
-
-        if !self.valid_account_id(transaction.cr_account_id) {
-            return Err(BooksError::from_str("Invalid CR account"))    
-        }
-
-        if transaction.dr_account_id.is_none() && transaction.cr_account_id.is_none() {
-            return Err(BooksError::from_str("A transaction must have at least one account"))    
+        if let Some(value) = self.validate_transaction(&transaction) {
+            return value;
         }
         
         self.transactions.push(transaction);
         Ok(())            
     }
 
+    fn validate_transaction(&mut self, transaction: &Transaction) -> Option<Result<(), BooksError>> {
+        if !self.valid_account_id(transaction.dr_account_id) {
+            return Some(Err(BooksError::from_str("Invalid DR account")))    
+        }
+        if !self.valid_account_id(transaction.cr_account_id) {
+            return Some(Err(BooksError::from_str("Invalid CR account")))    
+        }
+        if transaction.dr_account_id.is_none() && transaction.cr_account_id.is_none() {
+            return Some(Err(BooksError::from_str("A transaction must have at least one account")))    
+        }
+        None
+    }
+
     pub fn update_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
 
-        if !self.valid_account_id(transaction.dr_account_id) {
-            return Err(BooksError::from_str("Invalid DR account"))    
-        }
-
-        if !self.valid_account_id(transaction.cr_account_id) {
-            return Err(BooksError::from_str("Invalid CR account"))    
-        }
-
-        if transaction.dr_account_id.is_none() && transaction.cr_account_id.is_none() {
-            return Err(BooksError::from_str("A transaction must have at least one account"))    
+        if let Some(value) = self.validate_transaction(&transaction) {
+            return value;
         }
         
         if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
@@ -110,8 +107,40 @@ impl Books {
             Ok(account_transactions)
     }
 
-    pub fn add_schedule(&mut self, schedule: ScheduledTransaction) {
+    pub fn add_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+        if let Some(value) = self.validate_schedule(&schedule) {
+            return value;
+        }
+        
         self.scheduled_transactions.push(schedule);
+        Ok(())            
+    }
+
+    fn validate_schedule(&mut self, schedule: &ScheduledTransaction) -> Option<Result<(), BooksError>> {
+        if !self.valid_account_id(schedule.dr_account_id) {
+            return Some(Err(BooksError::from_str("Invalid DR account")))    
+        }
+        if !self.valid_account_id(schedule.cr_account_id) {
+            return Some(Err(BooksError::from_str("Invalid CR account")))    
+        }
+        if schedule.dr_account_id.is_none() && schedule.cr_account_id.is_none() {
+            return Some(Err(BooksError::from_str("A schedule must have at least one account")))    
+        }
+        None
+    }
+
+    pub fn update_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+        if let Some(value) = self.validate_schedule(&schedule) {
+            return value;
+        }
+
+        if let Some(index) = self.scheduled_transactions.iter().position(|s| s.id == schedule.id) {
+            let _old = std::mem::replace(&mut self.scheduled_transactions[index], schedule);
+            Ok(())          
+        } else {
+            Err(BooksError { error: "Schedule not found".to_string() })        
+        }
+        
     }
 
     pub fn schedules(&self) -> &[ScheduledTransaction] {
@@ -265,6 +294,60 @@ mod tests {
 
 
     }
+    #[test]
+    fn test_add_schedule() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let _result = books.add_schedule(st1);
+        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        assert!(matches!(expected, _result));
+        assert_eq!(1, (&books.schedules()).len());
+    }
+
+    #[test]
+    fn test_update_schedule() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let mut st1_copy = st1.clone();
+        let _result = books.add_schedule(st1);
+
+        st1_copy.description = "test changed".to_string();
+        let _result = books.update_schedule(st1_copy);
+        assert_eq!(1, (books.schedules()).len());
+        assert_eq!("test changed", books.schedules()[0].description);        
+    }
+
+
+    #[test]
+    fn test_add_schedule_invalid_dr_account() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let _result = books.add_schedule(st1);
+        let expected: Result<(), BooksError> = Ok(());
+        assert!(matches!(expected, _result));
+        assert_eq!(1, (&books.schedules()).len());
+    }
+
+    #[test]
+    fn test_add_schedule_invalid_cr_account() {
+        let (mut books, id1, _) = setup_books();
+        let st1 = build_schedule(Some(id1), Some(Uuid::new_v4()), NaiveDate::from_ymd(2022, 6, 4));
+        let _result = books.add_schedule(st1);
+        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        assert!(matches!(expected, _result));
+        assert_eq!(0, (&books.schedules()).len());
+    }
+
+    #[test]
+    fn test_add_schedule_no_account() {
+        let (mut books, _id1, _id2) = setup_books();
+        let st1 = build_schedule(None, None, NaiveDate::from_ymd(2022, 6, 4));
+        let _result = books.add_schedule(st1);
+        let expected: Result<(), BooksError> = Err(BooksError { error: "A transaction must have at least one account".to_string() });
+        assert!(matches!(expected, _result));
+        assert_eq!(0, (&books.schedules()).len());
+    }
+
 
 
     fn setup_books() -> (Books, Uuid, Uuid) {
@@ -293,6 +376,22 @@ mod tests {
             status: TransactionStatus::Recorded,
             balance: None };
         t1
+    }
+
+    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> ScheduledTransaction {
+        let st1 = ScheduledTransaction { 
+            id: Uuid::new_v4(), 
+            name: "Reoccuring transaction".to_string(),
+            start_date, 
+            last_date: start_date,
+            description: "Reoccuring transaction".to_string(), 
+            dr_account_id: id1, 
+            cr_account_id: id2, 
+            amount: dec!(100),
+            frequency: 1,
+            period: ScheduleEnum::Months 
+        };
+        st1
     }
 
 }

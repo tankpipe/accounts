@@ -83,7 +83,7 @@ mod tests {
             dr_account_id: Some(id1), 
             cr_account_id: Some(id2) 
         };
-        books.add_schedule(st);
+        let _ = books.add_schedule(st);
         books
    } 
    #[test]
