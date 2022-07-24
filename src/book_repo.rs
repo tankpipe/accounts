@@ -39,7 +39,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::account::{Account, Transaction, AccountType, TransactionStatus, ScheduledTransaction, ScheduleEnum};
+    use crate::account::{Account, Transaction, AccountType, TransactionStatus, Schedule, ScheduleEnum};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -71,7 +71,7 @@ mod tests {
             status: TransactionStatus::Recorded,
             balance: None };
         books.add_transaction(t2).unwrap();
-        let st = ScheduledTransaction{ 
+        let st = Schedule{ 
             id: Uuid::new_v4(), 
             name: "Some income".to_string(), 
             period: ScheduleEnum::Months, 

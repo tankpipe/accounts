@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, ScheduledTransaction, Transaction, AccountType}};
+use crate::{account::{Account, Schedule, Transaction, AccountType}};
 
 /// Book of accounts a.k.a The Books.
 
 #[derive(Serialize, Deserialize)]
 pub struct Books {
     accounts: HashMap<Uuid, Account>,
-    scheduled_transactions: Vec<ScheduledTransaction>,
+    scheduled_transactions: Vec<Schedule>,
     transactions: Vec<Transaction>
 }
 
@@ -107,7 +107,7 @@ impl Books {
             Ok(account_transactions)
     }
 
-    pub fn add_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+    pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
             return value;
         }
@@ -116,7 +116,7 @@ impl Books {
         Ok(())            
     }
 
-    fn validate_schedule(&mut self, schedule: &ScheduledTransaction) -> Option<Result<(), BooksError>> {
+    fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
         if !self.valid_account_id(schedule.dr_account_id) {
             return Some(Err(BooksError::from_str("Invalid DR account")))    
         }
@@ -129,7 +129,7 @@ impl Books {
         None
     }
 
-    pub fn update_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+    pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
             return value;
         }
@@ -143,7 +143,7 @@ impl Books {
         
     }
 
-    pub fn schedules(&self) -> &[ScheduledTransaction] {
+    pub fn schedules(&self) -> &[Schedule] {
         self.scheduled_transactions.as_slice()
     }
 
@@ -378,8 +378,8 @@ mod tests {
         t1
     }
 
-    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> ScheduledTransaction {
-        let st1 = ScheduledTransaction { 
+    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> Schedule {
+        let st1 = Schedule { 
             id: Uuid::new_v4(), 
             name: "Reoccuring transaction".to_string(),
             start_date, 

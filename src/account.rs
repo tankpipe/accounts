@@ -71,7 +71,7 @@ pub enum ScheduleEnum{
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ScheduledTransaction {
+pub struct Schedule {
     pub id: Uuid,
 	pub name: String,
 	pub period: ScheduleEnum,
@@ -88,7 +88,7 @@ pub struct ScheduledTransaction {
 	pub cr_account_id: Option<Uuid>
 }
 
-impl ScheduledTransaction {
+impl Schedule {
     pub fn schedule_next(&mut self, max_date : NaiveDate) -> Option<Transaction> {
         let next_date = self.get_next_date();
 
@@ -136,7 +136,7 @@ mod tests {
     use uuid::Uuid;
     
     use crate::account::ScheduleEnum;
-    use crate::account::ScheduledTransaction;
+    use crate::account::Schedule;
     use crate::account::TransactionStatus;
         
     
@@ -178,8 +178,8 @@ mod tests {
         assert_eq!(true, next.is_none());
     }
     
-    fn build_scheduled_transaction(frequency: i64, period: ScheduleEnum) -> ScheduledTransaction {
-        let st = ScheduledTransaction{
+    fn build_scheduled_transaction(frequency: i64, period: ScheduleEnum) -> Schedule {
+        let st = Schedule{
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
             period,
