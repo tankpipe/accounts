@@ -174,6 +174,8 @@ mod tests {
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.date);
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
+        let last = s.schedule_next(max_date);
+        assert!(last.is_none())        
     }
 
     #[test]
