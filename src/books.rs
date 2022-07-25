@@ -383,7 +383,7 @@ mod tests {
             id: Uuid::new_v4(), 
             name: "Reoccuring transaction".to_string(),
             start_date, 
-            last_date: start_date,
+            last_date: None,
             description: "Reoccuring transaction".to_string(), 
             dr_account_id: id1, 
             cr_account_id: id2, 

@@ -79,9 +79,9 @@ pub struct Schedule {
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
 	pub start_date: NaiveDate,
-    #[serde(serialize_with = "serialize_naivedate")]
-    #[serde(deserialize_with = "deserialize_naivedate")]
-    pub last_date: NaiveDate,
+    #[serde(serialize_with = "serialize_option_naivedate")]
+    #[serde(deserialize_with = "deserialize_option_naivedate")]    
+    pub last_date: Option<NaiveDate>,
 	pub amount: Decimal,
 	pub description: String,
 	pub dr_account_id: Option<Uuid>,
@@ -104,7 +104,7 @@ impl Schedule {
                 balance: None
             };
 
-            self.last_date = transaction.date;
+            self.last_date = Some(transaction.date);
             return Some(transaction)
         }
 
@@ -112,17 +112,21 @@ impl Schedule {
     }
 
     pub fn get_next_date(&self) -> NaiveDate {
-        let last_date = self.last_date;
-        
-        let new_date: NaiveDate;
-        match self.period {
-            ScheduleEnum::Days => new_date = last_date.checked_add_signed(Duration::days(self.frequency)).unwrap(),
-            ScheduleEnum::Months => new_date = shift_months(last_date, self.frequency.try_into().unwrap()),
-            ScheduleEnum::Years => new_date = shift_years(last_date, self.frequency.try_into().unwrap()),
-            _ => new_date = last_date
+        match self.last_date {
+           Some(d) => {
+                let last_date = d;                
+                let new_date: NaiveDate;
+                match self.period {
+                    ScheduleEnum::Days => new_date = last_date.checked_add_signed(Duration::days(self.frequency)).unwrap(),
+                    ScheduleEnum::Months => new_date = shift_months(last_date, self.frequency.try_into().unwrap()),
+                    ScheduleEnum::Years => new_date = shift_years(last_date, self.frequency.try_into().unwrap()),
+                    _ => new_date = last_date
+                }
+            
+                new_date
+            },
+            None => self.start_date            
         }
-
-        return new_date
     }
 }
 
@@ -157,49 +161,58 @@ mod tests {
 
     #[test]
     fn test_multiple_monthly() {
-        let mut st = build_scheduled_transaction(3, ScheduleEnum::Months);
+        let mut s= build_schedule(3, ScheduleEnum::Months);
         let max_date = NaiveDate::from_ymd(2022, 11, 11);
-        let mut next = st.schedule_next(max_date).unwrap();
+        let mut next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.date);
-        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), st.last_date);
-        assert_eq!(st.description, next.description);
-        assert_eq!(st.amount, next.amount);
+        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
+        assert_eq!(s.description, next.description);
+        assert_eq!(s.amount, next.amount);
         assert_eq!(TransactionStatus::Predicted, next.status);
-        next = st.schedule_next(max_date).unwrap();
+        next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.date);
-        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), st.last_date);
+        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
     }
 
     #[test]
     fn test_past_max_date() {
-        let mut st = build_scheduled_transaction(3, ScheduleEnum::Months);
+        let mut s= build_schedule(3, ScheduleEnum::Months);
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
-        let next = st.schedule_next(max_date);
+        let next = s.schedule_next(max_date);
         assert_eq!(true, next.is_none());
     }
+
+    #[test]
+    fn test_first() {
+        let mut s= build_schedule(3, ScheduleEnum::Months);
+        s.last_date = None;
+        let max_date = NaiveDate::from_ymd(2022, 05, 11);
+        let next = s.schedule_next(max_date).unwrap();
+        assert_eq!(s.start_date, next.date);
+    }
     
-    fn build_scheduled_transaction(frequency: i64, period: ScheduleEnum) -> Schedule {
-        let st = Schedule{
+    fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {
+        let s= Schedule{
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
             period,
             frequency,
             start_date:   NaiveDate::from_ymd(2022, 3, 11),
-            last_date:   NaiveDate::from_ymd(2022, 3, 11),
+            last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
             amount:      dec!(100.99),
-            description: "st test 1".to_string(),
+            description: "stes1".to_string(),
             dr_account_id: Some(Uuid::new_v4()),
             cr_account_id: Some(Uuid::new_v4())
         };
-        return st
+        return s
     }
     
     fn test_get_next(period: ScheduleEnum, frequency: i64, expected_date: NaiveDate) {
-        let st = build_scheduled_transaction(frequency, period);
-        let last_at_start = st.last_date;
-        let next_date = st.get_next_date();
+        let s= build_schedule(frequency, period);
+        let last_at_start = s.last_date;
+        let next_date = s.get_next_date();
         assert_eq!(expected_date, next_date);
-        assert_eq!(last_at_start, st.last_date);
+        assert_eq!(last_at_start, s.last_date);
     }
     
 }

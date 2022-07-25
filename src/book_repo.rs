@@ -77,7 +77,7 @@ mod tests {
             period: ScheduleEnum::Months, 
             frequency: 1, 
             start_date: NaiveDate::from_ymd(2022, 6, 4),
-            last_date: NaiveDate::from_ymd(2022, 6, 4), 
+            last_date: Some(NaiveDate::from_ymd(2022, 6, 4)), 
             amount: dec!(200), 
             description: "Money in".to_string(), 
             dr_account_id: Some(id1), 
