@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
@@ -11,6 +12,22 @@ pub struct Books {
     accounts: HashMap<Uuid, Account>,
     scheduled_transactions: Vec<Schedule>,
     transactions: Vec<Transaction>
+}
+
+impl Books {
+	pub fn generate(&mut self, end_date: NaiveDate) {
+		let mut transactions : Vec<Transaction> = Vec::new();
+
+		for schedule in &mut self.scheduled_transactions {
+			let mut next = schedule.schedule_next(end_date);
+			while next.is_some() {
+				transactions.push(next.unwrap());
+				next = schedule.schedule_next(end_date);
+			}
+		}
+		self.transactions.append(&mut transactions);
+        self.transactions.sort_by(|a, b| a.date.cmp(&b.date));
+	}
 }
 
 impl Books {
@@ -348,7 +365,44 @@ mod tests {
         assert_eq!(0, (&books.schedules()).len());
     }
 
+    #[test]
+	fn test_generate() {
+		let (mut books, id1, id2) = setup_books();
+        let _result = books.add_schedule(
+            Schedule {
+                id: Uuid::new_v4(),
+                name: "S_1".to_string(),
+                period: ScheduleEnum::Months,
+                frequency: 3,
+                start_date:   NaiveDate::from_ymd(2022, 3, 11),
+                last_date:   None,
+                amount:      dec!(100.99),
+                description: "st test 1".to_string(),
+                dr_account_id: Some(id1),
+                cr_account_id: Some(id2)
+            });
 
+            let _result = books.add_schedule(
+                Schedule {
+                    id: Uuid::new_v4(),
+                    name: "S_2".to_string(),
+                    period: ScheduleEnum::Days,
+                    frequency: 45,
+                    start_date:   NaiveDate::from_ymd(2022, 3, 11),
+                    last_date:   None,
+                    amount:      dec!(20.23),
+                    description: "st test 2".to_string(),
+                    dr_account_id: Some(id2),
+                    cr_account_id: Some(id1)
+                });
+
+        assert_eq!(0, books.transactions.len());
+        books.generate(NaiveDate::from_ymd(2023, 3, 11));		
+		
+		assert_eq!(14, books.transactions.len());
+		assert_eq!("st test 2", books.transactions[2].description);
+		assert_eq!("st test 1", books.transactions[4].description);
+	}
 
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty();
@@ -391,7 +445,7 @@ mod tests {
             cr_account_id: id2, 
             amount: dec!(100),
             frequency: 1,
-            period: ScheduleEnum::Months 
+            period: ScheduleEnum::Months
         };
         s1
     }
