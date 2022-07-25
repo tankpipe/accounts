@@ -36,7 +36,8 @@ pub struct Transaction {
     pub cr_account_id:   Option<Uuid>,
 	pub amount:      Decimal,
 	pub status:      TransactionStatus,
-    pub balance:     Option<Decimal>
+    pub balance:     Option<Decimal>,
+    pub schedule_id: Option<Uuid>
 }
 
 
@@ -101,7 +102,8 @@ impl Schedule {
                 cr_account_id: self.cr_account_id.clone(),
                 date:        next_date.clone(),
                 status:      TransactionStatus::Predicted,
-                balance: None
+                balance: None,
+                schedule_id: Some(self.id)
             };
 
             self.last_date = Some(transaction.date);
@@ -189,6 +191,7 @@ mod tests {
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
         let next = s.schedule_next(max_date).unwrap();
         assert_eq!(s.start_date, next.date);
+        assert_eq!(s.id, next.schedule_id.unwrap());
     }
     
     fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {

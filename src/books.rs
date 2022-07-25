@@ -374,12 +374,14 @@ mod tests {
             cr_account_id: id2, 
             amount: dec!(10000), 
             status: TransactionStatus::Recorded,
-            balance: None };
+            balance: None,
+            schedule_id: None 
+        };
         t1
     }
 
     fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> Schedule {
-        let st1 = Schedule { 
+        let s1 = Schedule { 
             id: Uuid::new_v4(), 
             name: "Reoccuring transaction".to_string(),
             start_date, 
@@ -391,7 +393,7 @@ mod tests {
             frequency: 1,
             period: ScheduleEnum::Months 
         };
-        st1
+        s1
     }
 
 }
