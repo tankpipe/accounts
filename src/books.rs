@@ -3,36 +3,27 @@ use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Schedule, Transaction, AccountType}};
+use crate::{account::{Account, Schedule, Transaction, AccountType}, scheduler::{Scheduler}};
 
 /// Book of accounts a.k.a The Books.
 
 #[derive(Serialize, Deserialize)]
 pub struct Books {
     accounts: HashMap<Uuid, Account>,
-    scheduled_transactions: Vec<Schedule>,
+    scheduler: Scheduler,
     transactions: Vec<Transaction>
 }
 
 impl Books {
-	pub fn generate(&mut self, end_date: NaiveDate) {
-		let mut transactions : Vec<Transaction> = Vec::new();
-
-		for schedule in &mut self.scheduled_transactions {
-			let mut next = schedule.schedule_next(end_date);
-			while next.is_some() {
-				transactions.push(next.unwrap());
-				next = schedule.schedule_next(end_date);
-			}
-		}
-		self.transactions.append(&mut transactions);
+	pub fn generate(&mut self, end_date: NaiveDate) {		
+		self.transactions.append(&mut self.scheduler.generate(end_date));
         self.transactions.sort_by(|a, b| a.date.cmp(&b.date));
 	}
 }
 
 impl Books {
     pub fn build_empty() -> Books {
-        Books{accounts: HashMap::new(), scheduled_transactions: Vec::new(), transactions: Vec::new()}
+        Books{accounts: HashMap::new(), scheduler: Scheduler::build_empty(), transactions: Vec::new()}
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -129,7 +120,7 @@ impl Books {
             return value;
         }
         
-        self.scheduled_transactions.push(schedule);
+        self.scheduler.add_schedule(schedule);
         Ok(())            
     }
 
@@ -151,17 +142,15 @@ impl Books {
             return value;
         }
 
-        if let Some(index) = self.scheduled_transactions.iter().position(|s| s.id == schedule.id) {
-            let _old = std::mem::replace(&mut self.scheduled_transactions[index], schedule);
-            Ok(())          
-        } else {
-            Err(BooksError { error: "Schedule not found".to_string() })        
-        }
-        
+        self.scheduler.update_schedule(schedule)        
     }
 
     pub fn schedules(&self) -> &[Schedule] {
-        self.scheduled_transactions.as_slice()
+        self.scheduler.schedules()
+    }
+
+    pub fn end_date(&self) -> Option<NaiveDate> {
+        self.scheduler.end_date()
     }
 
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
