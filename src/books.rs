@@ -1,21 +1,29 @@
 use std::collections::HashMap;
+use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, ScheduledTransaction, Transaction, AccountType}};
+use crate::{account::{Account, Schedule, Transaction, AccountType}, scheduler::{Scheduler}};
 
 /// Book of accounts a.k.a The Books.
 
 #[derive(Serialize, Deserialize)]
 pub struct Books {
     accounts: HashMap<Uuid, Account>,
-    scheduled_transactions: Vec<ScheduledTransaction>,
+    scheduler: Scheduler,
     transactions: Vec<Transaction>
 }
 
 impl Books {
+	pub fn generate(&mut self, end_date: NaiveDate) {		
+		self.transactions.append(&mut self.scheduler.generate(end_date));
+        self.transactions.sort_by(|a, b| a.date.cmp(&b.date));
+	}
+}
+
+impl Books {
     pub fn build_empty() -> Books {
-        Books{accounts: HashMap::new(), scheduled_transactions: Vec::new(), transactions: Vec::new()}
+        Books{accounts: HashMap::new(), scheduler: Scheduler::build_empty(), transactions: Vec::new()}
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -107,16 +115,16 @@ impl Books {
             Ok(account_transactions)
     }
 
-    pub fn add_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+    pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
             return value;
         }
         
-        self.scheduled_transactions.push(schedule);
+        self.scheduler.add_schedule(schedule);
         Ok(())            
     }
 
-    fn validate_schedule(&mut self, schedule: &ScheduledTransaction) -> Option<Result<(), BooksError>> {
+    fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
         if !self.valid_account_id(schedule.dr_account_id) {
             return Some(Err(BooksError::from_str("Invalid DR account")))    
         }
@@ -129,22 +137,20 @@ impl Books {
         None
     }
 
-    pub fn update_schedule(&mut self, schedule: ScheduledTransaction) -> Result<(), BooksError> {
+    pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
             return value;
         }
 
-        if let Some(index) = self.scheduled_transactions.iter().position(|s| s.id == schedule.id) {
-            let _old = std::mem::replace(&mut self.scheduled_transactions[index], schedule);
-            Ok(())          
-        } else {
-            Err(BooksError { error: "Schedule not found".to_string() })        
-        }
-        
+        self.scheduler.update_schedule(schedule)        
     }
 
-    pub fn schedules(&self) -> &[ScheduledTransaction] {
-        self.scheduled_transactions.as_slice()
+    pub fn schedules(&self) -> &[Schedule] {
+        self.scheduler.schedules()
+    }
+
+    pub fn end_date(&self) -> Option<NaiveDate> {
+        self.scheduler.end_date()
     }
 
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
@@ -348,7 +354,44 @@ mod tests {
         assert_eq!(0, (&books.schedules()).len());
     }
 
+    #[test]
+	fn test_generate() {
+		let (mut books, id1, id2) = setup_books();
+        let _result = books.add_schedule(
+            Schedule {
+                id: Uuid::new_v4(),
+                name: "S_1".to_string(),
+                period: ScheduleEnum::Months,
+                frequency: 3,
+                start_date:   NaiveDate::from_ymd(2022, 3, 11),
+                last_date:   None,
+                amount:      dec!(100.99),
+                description: "st test 1".to_string(),
+                dr_account_id: Some(id1),
+                cr_account_id: Some(id2)
+            });
 
+            let _result = books.add_schedule(
+                Schedule {
+                    id: Uuid::new_v4(),
+                    name: "S_2".to_string(),
+                    period: ScheduleEnum::Days,
+                    frequency: 45,
+                    start_date:   NaiveDate::from_ymd(2022, 3, 11),
+                    last_date:   None,
+                    amount:      dec!(20.23),
+                    description: "st test 2".to_string(),
+                    dr_account_id: Some(id2),
+                    cr_account_id: Some(id1)
+                });
+
+        assert_eq!(0, books.transactions.len());
+        books.generate(NaiveDate::from_ymd(2023, 3, 11));		
+		
+		assert_eq!(14, books.transactions.len());
+		assert_eq!("st test 2", books.transactions[2].description);
+		assert_eq!("st test 1", books.transactions[4].description);
+	}
 
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty();
@@ -374,24 +417,26 @@ mod tests {
             cr_account_id: id2, 
             amount: dec!(10000), 
             status: TransactionStatus::Recorded,
-            balance: None };
+            balance: None,
+            schedule_id: None 
+        };
         t1
     }
 
-    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> ScheduledTransaction {
-        let st1 = ScheduledTransaction { 
+    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> Schedule {
+        let s1 = Schedule { 
             id: Uuid::new_v4(), 
             name: "Reoccuring transaction".to_string(),
             start_date, 
-            last_date: start_date,
+            last_date: None,
             description: "Reoccuring transaction".to_string(), 
             dr_account_id: id1, 
             cr_account_id: id2, 
             amount: dec!(100),
             frequency: 1,
-            period: ScheduleEnum::Months 
+            period: ScheduleEnum::Months
         };
-        st1
+        s1
     }
 
 }

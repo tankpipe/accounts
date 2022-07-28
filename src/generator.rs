@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 
 use chrono::{NaiveDate};
-use crate::account::{ScheduledTransaction, Transaction};
+use crate::account::{Schedule, Transaction};
 
 pub struct Generator {
-	scheduled_transations: Vec<ScheduledTransaction>
+	pub scheduled_transations: Vec<Schedule>
 }
 
 impl Generator {
-	fn generate(&mut self, end_date: NaiveDate) -> Vec<Transaction> {
+	pub fn generate(&mut self, end_date: NaiveDate) -> Vec<Transaction> {
 		let mut transactions : Vec<Transaction> = Vec::new();
 
 		for schedule in &mut self.scheduled_transations {
@@ -30,31 +30,31 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
     
-    use crate::account::{ScheduleEnum, ScheduledTransaction};
+    use crate::account::{ScheduleEnum, Schedule};
     use crate::generator::Generator;
 
 	#[test]
 	fn test_generate() {
-		let st1 = ScheduledTransaction{
+		let st1 = Schedule{
 			id: Uuid::new_v4(),
 			name: "ST 1".to_string(),
 			period: ScheduleEnum::Months,
 			frequency: 3,
 			start_date:   NaiveDate::from_ymd(2022, 3, 11),
-			last_date:   NaiveDate::from_ymd(2022, 3, 11),
+			last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
 			amount:      dec!(100.99),
 			description: "st test 1".to_string(),
 			dr_account_id: Some(Uuid::new_v4()),
 			cr_account_id: Some(Uuid::new_v4())
 		};
 
-		let st2 = ScheduledTransaction{
+		let st2 = Schedule{
 			id: Uuid::new_v4(),
 			name: "ST 2".to_string(),
 			period: ScheduleEnum::Days,
 			frequency: 45,
 			start_date:   NaiveDate::from_ymd(2022, 3, 11),
-			last_date:   NaiveDate::from_ymd(2022, 3, 11),
+			last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
 			amount:      dec!(20.23),
 			description: "st test 2".to_string(),
 			dr_account_id: Some(Uuid::new_v4()),
@@ -63,7 +63,7 @@ mod tests {
 
 
 
-		let mut generator = Generator{scheduled_transations: vec!{st1, st2}};
+		let mut generator = Generator{scheduled_transations: vec!{st1, st2}.as_slice()};
 	
 
 		let max_date = NaiveDate::from_ymd(2023, 3, 11);		
