@@ -82,6 +82,9 @@ pub struct Schedule {
 	pub start_date: NaiveDate,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]    
+    pub end_date: Option<NaiveDate>,
+    #[serde(serialize_with = "serialize_option_naivedate")]
+    #[serde(deserialize_with = "deserialize_option_naivedate")]    
     pub last_date: Option<NaiveDate>,
 	pub amount: Decimal,
 	pub description: String,
@@ -93,7 +96,7 @@ impl Schedule {
     pub fn schedule_next(&mut self, max_date : NaiveDate) -> Option<Transaction> {
         let next_date = self.get_next_date();
 
-        if next_date <= max_date {
+        if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
             let transaction = Transaction{
                 id: Uuid::new_v4(),
                 description: self.description.clone(),
@@ -187,6 +190,14 @@ mod tests {
     }
 
     #[test]
+    fn test_past_end_date() {
+        let mut s= build_schedule(3, ScheduleEnum::Months);
+        s.end_date = Some(NaiveDate::from_ymd(2022, 05, 11));
+        let next = s.schedule_next(NaiveDate::from_ymd(2023, 05, 11));
+        assert_eq!(true, next.is_none());
+    }
+
+    #[test]
     fn test_first() {
         let mut s= build_schedule(3, ScheduleEnum::Months);
         s.last_date = None;
@@ -203,6 +214,7 @@ mod tests {
             period,
             frequency,
             start_date:   NaiveDate::from_ymd(2022, 3, 11),
+            end_date:   None,
             last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
             amount:      dec!(100.99),
             description: "stes1".to_string(),

@@ -39,7 +39,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::account::{Account, Transaction, AccountType, TransactionStatus, Schedule, ScheduleEnum};
+    use crate::{account::{Account, Transaction, AccountType, TransactionStatus, Schedule, ScheduleEnum}};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -81,6 +81,7 @@ mod tests {
             period: ScheduleEnum::Months, 
             frequency: 1, 
             start_date: NaiveDate::from_ymd(2022, 6, 4),
+            end_date: None,
             last_date: Some(NaiveDate::from_ymd(2022, 6, 4)), 
             amount: dec!(200), 
             description: "Money in".to_string(), 
@@ -112,7 +113,7 @@ mod tests {
         }
 
         let result = load_books(filepath);
-        assert_eq!(books.accounts().len(), result.unwrap().accounts().len());
-   }   
+        assert_eq!(books.accounts().len(), result.unwrap().accounts().len());        
+    }   
 
 }

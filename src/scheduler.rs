@@ -56,6 +56,7 @@ impl Scheduler {
 			}
 		}
         transactions.sort_by(|a, b| a.date.cmp(&b.date));        
+        print!("{:?}", transactions);
         transactions
 	}
 }
@@ -85,9 +86,10 @@ mod tests {
                 name: "S_1".to_string(),
                 period: ScheduleEnum::Months,
                 frequency: 3,
-                start_date:   NaiveDate::from_ymd(2022, 3, 11),
-                last_date:   None,
-                amount:      dec!(100.99),
+                start_date: NaiveDate::from_ymd(2022, 3, 11),
+                end_date: None,
+                last_date: None,
+                amount: dec!(100.99),
                 description: "st test 1".to_string(),
                 dr_account_id: Some(id1),
                 cr_account_id: Some(id2)
@@ -99,9 +101,10 @@ mod tests {
                 name: "S_2".to_string(),
                 period: ScheduleEnum::Days,
                 frequency: 45,
-                start_date:   NaiveDate::from_ymd(2022, 3, 11),
-                last_date:   None,
-                amount:      dec!(20.23),
+                start_date: NaiveDate::from_ymd(2022, 3, 11),
+                end_date: Some(NaiveDate::from_ymd(2023, 1, 20)),
+                last_date: None,
+                amount: dec!(20.23),
                 description: "st test 2".to_string(),
                 dr_account_id: Some(id2),
                 cr_account_id: Some(id1)
@@ -109,7 +112,7 @@ mod tests {
 
         let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));		
 		
-		assert_eq!(14, transactions.len());
+		assert_eq!(13, transactions.len());
 		assert_eq!("st test 2", transactions[2].description);
 		assert_eq!("st test 1", transactions[4].description);
 	}
