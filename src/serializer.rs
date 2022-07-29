@@ -19,6 +19,9 @@ pub fn deserialize_option_naivedate<'de, D>(deserializer: D) -> Result<Option<Na
     where D: Deserializer<'de>
 {
     let date_str = String::deserialize(deserializer)?;
+    if date_str.eq("null") {
+        return Ok(None)
+    }
     use serde::de::Error;
     let date = parse_date_str(&date_str).map_err(Error::custom);
     Ok(Some(date?))
