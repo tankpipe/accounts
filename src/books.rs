@@ -5,10 +5,12 @@ use uuid::Uuid;
 
 use crate::{account::{Account, Schedule, Transaction, AccountType}, scheduler::{Scheduler}};
 
-/// Book of accounts a.k.a The Books.
 
+/// Book of accounts a.k.a The Books.
 #[derive(Serialize, Deserialize)]
 pub struct Books {
+    pub id: Uuid,
+    pub name: String,
     accounts: HashMap<Uuid, Account>,
     scheduler: Scheduler,
     transactions: Vec<Transaction>
@@ -22,8 +24,12 @@ impl Books {
 }
 
 impl Books {
-    pub fn build_empty() -> Books {
-        Books{accounts: HashMap::new(), scheduler: Scheduler::build_empty(), transactions: Vec::new()}
+    pub fn build_empty(name: &str) -> Books {
+        Books{
+            id: Uuid::new_v4(), 
+            name: name.to_string(), 
+            accounts: HashMap::new(), 
+            scheduler: Scheduler::build_empty(), transactions: Vec::new()}
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -186,7 +192,7 @@ mod tests {
     fn test_add_account(){
         let a = Account::create_new("test account", AccountType::Credit);
         let id1 = a.id;
-        let mut b = Books::build_empty();
+        let mut b = Books::build_empty("My Books");
         b.add_account(a);
 
         let a2 = &b.accounts()[0];
@@ -396,7 +402,7 @@ mod tests {
 	}
 
     fn setup_books() -> (Books, Uuid, Uuid) {
-        let mut books = Books::build_empty();
+        let mut books = Books::build_empty("My Books");
         let dr_account1 = Account::create_new("Savings Account 1", AccountType::Debit);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);

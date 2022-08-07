@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::{path::Path, fs::File, io::Read};
-use std::io;
+use std::{io};
+
 use crate::books::Books;
 
 /// Simple JSON file storage for Books.
@@ -18,18 +19,16 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
                 }
             }
         }
-    }
-   
+    }   
     
     // There was no file, or the file failed to load, create new Books.
-    Ok(Books::build_empty())
+    Ok(Books::build_empty("My Books"))
 }
 
-fn save_books<P: AsRef<Path>>(path: P, books: Books) -> io::Result<()> {
+pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     ::serde_json::to_writer(&File::create(path)?, &books)?;
     Ok(())
 }
-
 
 #[cfg(test)]
 
@@ -43,7 +42,7 @@ mod tests {
     use super::{Books, load_books};
 
    fn build_books() -> Books {
-        let mut books = Books::build_empty();
+        let mut books = Books::build_empty("My Books");
         let dr_account1 = Account::create_new("Savings Account 1", AccountType::Debit);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);
@@ -115,5 +114,4 @@ mod tests {
         let result = load_books(filepath);
         assert_eq!(books.accounts().len(), result.unwrap().accounts().len());        
     }   
-
 }
