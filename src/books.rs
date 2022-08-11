@@ -3,7 +3,7 @@ use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Schedule, Transaction, AccountType}, scheduler::{Scheduler}};
+use crate::{account::{Account, Schedule, Transaction, Entry}, scheduler::{Scheduler}};
 
 
 /// Book of accounts a.k.a The Books.
@@ -17,7 +17,7 @@ pub struct Books {
 }
 
 impl Books {
-	pub fn generate(&mut self, end_date: NaiveDate) {		
+	pub fn generate(&mut self, end_date: NaiveDate) {
 		self.transactions.append(&mut self.scheduler.generate(end_date));
         self.transactions.sort_by(|a, b| a.date.cmp(&b.date));
 	}
@@ -26,9 +26,9 @@ impl Books {
 impl Books {
     pub fn build_empty(name: &str) -> Books {
         Books{
-            id: Uuid::new_v4(), 
-            name: name.to_string(), 
-            accounts: HashMap::new(), 
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            accounts: HashMap::new(),
             scheduler: Scheduler::build_empty(), transactions: Vec::new()}
     }
 
@@ -43,26 +43,29 @@ impl Books {
         }
         accounts_clone
     }
-    
+
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
 
         if let Some(value) = self.validate_transaction(&transaction) {
             return value;
         }
-        
+
         self.transactions.push(transaction);
-        Ok(())            
+        Ok(())
     }
 
     fn validate_transaction(&mut self, transaction: &Transaction) -> Option<Result<(), BooksError>> {
-        if !self.valid_account_id(transaction.dr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid DR account")))    
+
+        for e in transaction.entries.as_slice() {
+            if !self.valid_account_id(Some(e.account_id)) {
+                return Some(Err(BooksError::from_str("Invalid DR account")))
+            }
         }
-        if !self.valid_account_id(transaction.cr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid CR account")))    
+        if transaction.entries.len() < 1 {
+            return Some(Err(BooksError::from_str("A transaction must have at least one entry")))
         }
-        if transaction.dr_account_id.is_none() && transaction.cr_account_id.is_none() {
-            return Some(Err(BooksError::from_str("A transaction must have at least one account")))    
+        if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
+            return Some(Err(BooksError::from_str("Invalid Account")))
         }
         None
     }
@@ -72,73 +75,91 @@ impl Books {
         if let Some(value) = self.validate_transaction(&transaction) {
             return value;
         }
-        
+
         if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
             let _old = std::mem::replace(&mut self.transactions[index], transaction);
-            Ok(())          
+            Ok(())
         } else {
-            Err(BooksError { error: "Transaction not found".to_string() })        
+            Err(BooksError { error: "Transaction not found".to_string() })
         }
 
-        
+
     }
 
     pub fn transactions(&self) -> &[Transaction] {
         self.transactions.as_slice()
     }
 
+    pub fn transaction(&self, transaction_id: Uuid) ->  Option<Transaction> {
+        let matches:Vec<Transaction> = self.transactions.iter()
+            .filter(|t|t.id == transaction_id)
+            .map(|t| t.clone())
+            .collect();
+
+        if matches.len() > 0 {
+            return Some(matches[0].clone())
+        }
+
+        None
+    }
+
     /// Get a copy of the transactions with balances for a given Account.
-    pub fn account_transactions(&self, account_id: Uuid) -> Result<Vec<Transaction>, BooksError> {
+    pub fn account_entries(&self, account_id: Uuid) -> Result<Vec<Entry>, BooksError> {
         if !self.accounts.contains_key(&account_id) {
             return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
         }
 
-        let mut account_transactions: Vec<Transaction> = Vec::new();
+        let mut account_transactions: Vec<Transaction> =
+            self.transactions
+                .iter()
+                .filter(|t|t.involves_account(account_id))
+                .map(|t| t.clone())
+                .collect();
 
-            for t in &self.transactions {
-                if !t.dr_account_id.is_none() && t.dr_account_id.unwrap() == account_id ||
-                   !t.cr_account_id.is_none() && t.cr_account_id.unwrap() == account_id {
-                    let new_t = t.clone();
-                    account_transactions.push(new_t);
+
+        account_transactions.sort_by(|a, b| a.date.cmp(&b.date));
+
+        let account = self.accounts.get(&account_id).unwrap();
+        let mut balance = account.starting_balance;
+        let mut account_entries: Vec<Entry> = Vec::new();
+        account_transactions
+            .iter()
+            .for_each(|t| t.account_entries(account_id)
+                .iter()
+                .for_each(|e|{
+                    if e.transaction_type == account.account_type {
+                        balance = balance + e.amount;
+                    } else {
+                        balance = balance - e.amount;
+                    };
+                    let mut new_e = e.clone();
+                    new_e.set_balance(Some(balance.clone()));
+                    account_entries.push(new_e);
                 }
-            }
+                )
+            );
 
-            account_transactions.sort_by(|a, b| a.date.cmp(&b.date));
-
-            let account = self.accounts.get(&account_id).unwrap();
-            let mut balance = account.starting_balance;
-            for t in &mut account_transactions {
-                if (!t.dr_account_id.is_none() && t.dr_account_id.unwrap() == account_id && account.account_type == AccountType::Debit) || 
-                   (!t.cr_account_id.is_none() && t.cr_account_id.unwrap() == account_id && account.account_type == AccountType::Credit)
-                {
-                    balance = balance + t.amount;
-                } else  {
-                    balance = balance - t.amount;                    
-                }
-                t.balance = Some(balance.clone());
-            }
-
-            Ok(account_transactions)
+        Ok(account_entries)
     }
 
     pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
             return value;
         }
-        
+
         self.scheduler.add_schedule(schedule);
-        Ok(())            
+        Ok(())
     }
 
     fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
         if !self.valid_account_id(schedule.dr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid DR account")))    
+            return Some(Err(BooksError::from_str("Invalid DR account")))
         }
         if !self.valid_account_id(schedule.cr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid CR account")))    
+            return Some(Err(BooksError::from_str("Invalid CR account")))
         }
         if schedule.dr_account_id.is_none() && schedule.cr_account_id.is_none() {
-            return Some(Err(BooksError::from_str("A schedule must have at least one account")))    
+            return Some(Err(BooksError::from_str("A schedule must have at least one account")))
         }
         None
     }
@@ -148,7 +169,7 @@ impl Books {
             return value;
         }
 
-        self.scheduler.update_schedule(schedule)        
+        self.scheduler.update_schedule(schedule)
     }
 
     pub fn schedules(&self) -> &[Schedule] {
@@ -165,7 +186,7 @@ impl Books {
             None => return true
         }
     }
-}   
+}
 
 #[derive(Debug)]
 pub struct BooksError {
@@ -203,7 +224,7 @@ mod tests {
     fn test_add_transaction() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction(Some(id1), Some(id2));
-        let t1_id = t1.id;    
+        let t1_id = t1.id;
         books.add_transaction(t1).unwrap();
         let t1_2 = &books.transactions()[0];
         assert_eq!(t1_id, t1_2.id);
@@ -213,7 +234,7 @@ mod tests {
     fn test_add_transaction_no_cr_account() {
         let (mut books, id1, _) = setup_books();
         let t1 = build_transaction(Some(id1), None);
-        let t1_id = t1.id;    
+        let t1_id = t1.id;
         books.add_transaction(t1).unwrap();
         let t1_2 = &books.transactions()[0];
         assert_eq!(t1_id, t1_2.id);
@@ -223,7 +244,7 @@ mod tests {
     fn test_add_transaction_no_dr_account() {
         let (mut books, _, id2) = setup_books();
         let t1 = build_transaction(None, Some(id2));
-        let t1_id = t1.id;    
+        let t1_id = t1.id;
         books.add_transaction(t1).unwrap();
         let t1_2 = &books.transactions()[0];
         assert_eq!(t1_id, t1_2.id);
@@ -266,43 +287,46 @@ mod tests {
         let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd(2022, 6, 5));
         let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
         let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd(2022, 7, 2));
-        let t1_id = t1.id;    
-        let t2_id = t2.id;
-        let t3_id = t3.id;    
-        let t4_id = t4.id;    
+        let t1a1e1 = &t1.account_entries(id1)[0];
+        let t3a1e3 = &t3.account_entries(id1)[0];
+        let t4a1e4 = &t4.account_entries(id1)[0];
+        let t1a2e1 = &t1.account_entries(id2)[0];
+        let t2a2e1 = &t2.account_entries(id2)[0];
+        let t4a2e1 = &t4.account_entries(id2)[0];
         books.add_transaction(t1).unwrap();
         books.add_transaction(t2).unwrap();
         books.add_transaction(t3).unwrap();
         books.add_transaction(t4).unwrap();
-        let a1_transactions = books.account_transactions(id1).unwrap();        
-        assert_eq!(3, a1_transactions.len());
+        let a1_entries = books.account_entries(id1).unwrap();
+        assert_eq!(3, a1_entries.len());
 
-        let entry1 = &a1_transactions[0];
-        assert_eq!(t1_id, entry1.id);
+        let entry1 = &a1_entries[0];
+        assert_eq!(t1a1e1.id, entry1.id);
         assert_eq!(dec!(10000), entry1.balance.unwrap());
 
-        let entry2 = &a1_transactions[1];
-        assert_eq!(t3_id, entry2.id);
-        assert_eq!(dec!(20000), entry2.balance.unwrap());        
+        let entry2 = &a1_entries[1];
+        assert_eq!(t3a1e3.id, entry2.id);
+        assert_eq!(dec!(20000), entry2.balance.unwrap());
 
-        let entry3 = &a1_transactions[2];
-        assert_eq!(t4_id, entry3.id);
-        assert_eq!(dec!(10000), entry3.balance.unwrap());        
+        let entry3 = &a1_entries[2];
+        println!("{:?}", entry3);
+        assert_eq!(t4a1e4.id, entry3.id);
+        assert_eq!(dec!(10000), entry3.balance.unwrap());
 
-        let a2_transactions = books.account_transactions(id2).unwrap();        
-        assert_eq!(3, a2_transactions.len());
+        let a2_entries = books.account_entries(id2).unwrap();
+        assert_eq!(3, a2_entries.len());
 
-        let entry21 = &a2_transactions[0];
-        assert_eq!(t1_id, entry21.id);
+        let entry21 = &a2_entries[0];
+        assert_eq!(t1a2e1.id, entry21.id);
         assert_eq!(dec!(-10000), entry21.balance.unwrap());
 
-        let entry22 = &a2_transactions[1];
-        assert_eq!(t2_id, entry22.id);
-        assert_eq!(dec!(-20000), entry22.balance.unwrap());        
+        let entry22 = &a2_entries[1];
+        assert_eq!(t2a2e1.id, entry22.id);
+        assert_eq!(dec!(-20000), entry22.balance.unwrap());
 
-        let entry23 = &a2_transactions[2];
-        assert_eq!(t4_id, entry23.id);
-        assert_eq!(dec!(-10000), entry23.balance.unwrap());        
+        let entry23 = &a2_entries[2];
+        assert_eq!(t4a2e1.id, entry23.id);
+        assert_eq!(dec!(-10000), entry23.balance.unwrap());
 
 
     }
@@ -326,7 +350,7 @@ mod tests {
         st1_copy.description = "test changed".to_string();
         let _result = books.update_schedule(st1_copy);
         assert_eq!(1, (books.schedules()).len());
-        assert_eq!("test changed", books.schedules()[0].description);        
+        assert_eq!("test changed", books.schedules()[0].description);
     }
 
 
@@ -394,8 +418,8 @@ mod tests {
                 });
 
         assert_eq!(0, books.transactions.len());
-        books.generate(NaiveDate::from_ymd(2023, 3, 11));		
-		
+        books.generate(NaiveDate::from_ymd(2023, 3, 11));
+
 		assert_eq!(14, books.transactions.len());
 		assert_eq!("st test 2", books.transactions[2].description);
 		assert_eq!("st test 1", books.transactions[4].description);
@@ -413,34 +437,42 @@ mod tests {
     }
 
     fn build_transaction(id1: Option<Uuid>, id2: Option<Uuid>) -> Transaction {
-        build_transaction_with_date(id1, id2, NaiveDate::from_ymd(2022, 6, 4))        
+        build_transaction_with_date(id1, id2, NaiveDate::from_ymd(2022, 6, 4))
     }
 
-    fn build_transaction_with_date(id1: Option<Uuid>, id2: Option<Uuid>, date: NaiveDate) -> Transaction {
-        let t1 = Transaction{ 
-            id: Uuid::new_v4(), 
-            date, 
-            description: "received moneys".to_string(), 
-            dr_account_id: id1, 
-            cr_account_id: id2, 
-            amount: dec!(10000), 
-            status: TransactionStatus::Recorded,
-            balance: None,
-            schedule_id: None 
+    fn build_transaction_with_date(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate) -> Transaction {
+        let transaction_id = Uuid::new_v4();
+        let description_str = "received moneys";
+        let amount = dec!(10000);
+        let mut t1 = Transaction{
+            id: transaction_id,
+            date,
+            description: description_str.to_string(),
+            entries: Vec::new(),
         };
+
+        if dr_account_id.is_some() {
+            t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
+                transaction_type:AccountType::Debit, amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+        }
+
+        if cr_account_id.is_some() {
+            t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
+                transaction_type:AccountType::Credit,amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+        }
         t1
     }
 
     fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> Schedule {
-        let s1 = Schedule { 
-            id: Uuid::new_v4(), 
+        let s1 = Schedule {
+            id: Uuid::new_v4(),
             name: "Reoccuring transaction".to_string(),
-            start_date, 
+            start_date,
             end_date: None,
             last_date: None,
-            description: "Reoccuring transaction".to_string(), 
-            dr_account_id: id1, 
-            cr_account_id: id2, 
+            description: "Reoccuring transaction".to_string(),
+            dr_account_id: id1,
+            cr_account_id: id2,
             amount: dec!(100),
             frequency: 1,
             period: ScheduleEnum::Months

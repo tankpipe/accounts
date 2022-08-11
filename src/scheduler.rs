@@ -4,44 +4,44 @@ use crate::serializer::*;
 
 use crate::{account::{Schedule, Transaction}, books::BooksError};
 
-/// 
+///
 
 #[derive(Serialize, Deserialize)]
 pub struct Scheduler {
     schedules: Vec<Schedule>,
     #[serde(serialize_with = "serialize_option_naivedate")]
-    #[serde(deserialize_with = "deserialize_option_naivedate")]    
+    #[serde(deserialize_with = "deserialize_option_naivedate")]
     end_date: Option<NaiveDate>
 }
 
 impl Scheduler {
-    
+
     pub fn build_empty() -> Scheduler {
-        Scheduler{schedules: Vec::new(), end_date: None}        
+        Scheduler{schedules: Vec::new(), end_date: None}
     }
 
-    pub fn add_schedule(&mut self, schedule: Schedule) {    
+    pub fn add_schedule(&mut self, schedule: Schedule) {
         self.schedules.push(schedule);
     }
-    
+
     pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
-    
+
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule.id) {
             let _old = std::mem::replace(&mut self.schedules[index], schedule);
-            Ok(())          
+            Ok(())
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })        
+            Err(BooksError { error: "Schedule not found".to_string() })
         }
-        
+
     }
-    
+
     pub fn schedules(&self) -> &[Schedule] {
         self.schedules.as_slice()
     }
 
     pub fn end_date(&self) -> Option<NaiveDate> {
         println!("{:?}", self.end_date);
-        self.end_date.and_then(|d| Some(d.clone()))        
+        self.end_date.and_then(|d| Some(d.clone()))
     }
 
 	pub fn generate(&mut self, end_date: NaiveDate) -> Vec<Transaction> {
@@ -55,7 +55,7 @@ impl Scheduler {
 				next = schedule.schedule_next(end_date);
 			}
 		}
-        transactions.sort_by(|a, b| a.date.cmp(&b.date));        
+        transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
         print!("{:?}", transactions);
         transactions
 	}
@@ -71,7 +71,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use crate::{account::*, scheduler::Scheduler};
 
-     
+
     #[test]
 	fn test_generate() {
         let mut scheduler  = Scheduler{
@@ -110,11 +110,11 @@ mod tests {
                 cr_account_id: Some(id1)
             });
 
-        let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));		
-		
+        let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));
+
 		assert_eq!(13, transactions.len());
-		assert_eq!("st test 2", transactions[2].description);
-		assert_eq!("st test 1", transactions[4].description);
+		assert_eq!("st test 2", transactions[2].entries[0].description);
+		assert_eq!("st test 1", transactions[4].entries[0].description);
 	}
 
 }
