@@ -19,7 +19,7 @@ pub struct Books {
 impl Books {
 	pub fn generate(&mut self, end_date: NaiveDate) {
 		self.transactions.append(&mut self.scheduler.generate(end_date));
-        self.transactions.sort_by(|a, b| a.date.cmp(&b.date));
+        self.transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
 	}
 }
 
@@ -419,8 +419,8 @@ mod tests {
         books.generate(NaiveDate::from_ymd(2023, 3, 11));
 
 		assert_eq!(14, books.transactions.len());
-		assert_eq!("st test 2", books.transactions[2].description);
-		assert_eq!("st test 1", books.transactions[4].description);
+		assert_eq!("st test 2", books.transactions[2].entries[0].description);
+		assert_eq!("st test 1", books.transactions[4].entries[0].description);
 	}
 
     fn setup_books() -> (Books, Uuid, Uuid) {
@@ -444,8 +444,6 @@ mod tests {
         let amount = dec!(10000);
         let mut t1 = Transaction{
             id: transaction_id,
-            date,
-            description: description_str.to_string(),
             entries: Vec::new(),
         };
 

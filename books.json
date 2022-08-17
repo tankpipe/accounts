@@ -38,8 +38,6 @@
     "transactions": [
         {
             "id": "b06d8ac6-c1da-4f2d-a618-b193abbf9465",
-            "date": "2022-06-04",
-            "description": "received moneys",
             "entries": [
                 {
                     "id": "e20b206c-5cd8-4cac-a597-0d0e6efaba5c",
@@ -69,8 +67,6 @@
         },
         {
             "id": "d7dd3c52-629c-467e-acbb-e173b98304da",
-            "date": "2022-06-05",
-            "description": "Gave some moneys back",
             "entries": [
                 {
                     "id": "2aee19e9-b91d-4917-ad97-51d7287d89b0",
