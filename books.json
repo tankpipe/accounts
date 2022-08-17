@@ -1,16 +1,16 @@
 {
-    "id": "0e5ab586-529d-4f2f-891d-f715564924bc",
+    "id": "f9f1d167-4429-4400-8b76-01bc5680c354",
     "name": "My Books",
     "accounts": {
-        "f9402f24-0e37-4797-ac0d-ffc0e1254ae7": {
-            "id": "f9402f24-0e37-4797-ac0d-ffc0e1254ae7",
+        "6f49fd80-ba9f-4af2-911b-59eb4bf0bf4f": {
+            "id": "6f49fd80-ba9f-4af2-911b-59eb4bf0bf4f",
             "name": "Savings Account 1",
             "account_type": "Debit",
             "balance": "0",
             "starting_balance": "0"
         },
-        "af239281-1a58-4fe8-8169-a015e2088e8e": {
-            "id": "af239281-1a58-4fe8-8169-a015e2088e8e",
+        "ddc22532-28a8-4ade-98af-56443b7b93b1": {
+            "id": "ddc22532-28a8-4ade-98af-56443b7b93b1",
             "name": "Credit Account 1",
             "account_type": "Credit",
             "balance": "0",
@@ -20,7 +20,7 @@
     "scheduler": {
         "schedules": [
             {
-                "id": "47b5413c-de97-4e72-9032-1b064411f9ac",
+                "id": "dfc30a44-72c9-41a6-b5d8-b2c8317353a2",
                 "name": "Some income",
                 "period": "Months",
                 "frequency": 1,
@@ -29,22 +29,24 @@
                 "last_date": "2022-06-04",
                 "amount": "200",
                 "description": "Money in",
-                "dr_account_id": "f9402f24-0e37-4797-ac0d-ffc0e1254ae7",
-                "cr_account_id": "af239281-1a58-4fe8-8169-a015e2088e8e"
+                "dr_account_id": "6f49fd80-ba9f-4af2-911b-59eb4bf0bf4f",
+                "cr_account_id": "ddc22532-28a8-4ade-98af-56443b7b93b1"
             }
         ],
         "end_date": "null"
     },
     "transactions": [
         {
-            "id": "18e795b7-f5b4-40aa-a578-0ebbda797b77",
+            "id": "b06d8ac6-c1da-4f2d-a618-b193abbf9465",
+            "date": "2022-06-04",
+            "description": "received moneys",
             "entries": [
                 {
-                    "id": "eef904fe-5bb8-41c8-a16e-c822d10c68f9",
-                    "transaction_id": "18e795b7-f5b4-40aa-a578-0ebbda797b77",
+                    "id": "e20b206c-5cd8-4cac-a597-0d0e6efaba5c",
+                    "transaction_id": "b06d8ac6-c1da-4f2d-a618-b193abbf9465",
                     "date": "2022-06-04",
                     "description": "received moneys",
-                    "account_id": "f9402f24-0e37-4797-ac0d-ffc0e1254ae7",
+                    "account_id": "6f49fd80-ba9f-4af2-911b-59eb4bf0bf4f",
                     "transaction_type": "Debit",
                     "amount": "10000",
                     "status": "Recorded",
@@ -52,11 +54,11 @@
                     "schedule_id": null
                 },
                 {
-                    "id": "f0e66ac5-bbf2-40d6-a2e7-7a4b43e1903e",
-                    "transaction_id": "18e795b7-f5b4-40aa-a578-0ebbda797b77",
+                    "id": "48419c22-7488-4098-806e-6e1b87d32360",
+                    "transaction_id": "b06d8ac6-c1da-4f2d-a618-b193abbf9465",
                     "date": "2022-06-04",
                     "description": "received moneys",
-                    "account_id": "af239281-1a58-4fe8-8169-a015e2088e8e",
+                    "account_id": "ddc22532-28a8-4ade-98af-56443b7b93b1",
                     "transaction_type": "Credit",
                     "amount": "10000",
                     "status": "Recorded",
@@ -66,16 +68,16 @@
             ]
         },
         {
-            "id": "98fda471-ee11-4ebd-abe1-4a3f6c097e89",
+            "id": "d7dd3c52-629c-467e-acbb-e173b98304da",
             "date": "2022-06-05",
             "description": "Gave some moneys back",
             "entries": [
                 {
-                    "id": "238ac621-2d4d-415b-84be-ebc8c4b3899e",
-                    "transaction_id": "98fda471-ee11-4ebd-abe1-4a3f6c097e89",
+                    "id": "2aee19e9-b91d-4917-ad97-51d7287d89b0",
+                    "transaction_id": "d7dd3c52-629c-467e-acbb-e173b98304da",
                     "date": "2022-06-05",
                     "description": "Gave some moneys back",
-                    "account_id": "af239281-1a58-4fe8-8169-a015e2088e8e",
+                    "account_id": "ddc22532-28a8-4ade-98af-56443b7b93b1",
                     "transaction_type": "Debit",
                     "amount": "98.99",
                     "status": "Recorded",
@@ -83,11 +85,11 @@
                     "schedule_id": null
                 },
                 {
-                    "id": "5a363dc6-af7f-4d25-b015-993949defc8d",
-                    "transaction_id": "98fda471-ee11-4ebd-abe1-4a3f6c097e89",
+                    "id": "7a9cf01f-3450-404c-8dd0-2b682e74845d",
+                    "transaction_id": "d7dd3c52-629c-467e-acbb-e173b98304da",
                     "date": "2022-06-05",
                     "description": "Gave some moneys back",
-                    "account_id": "f9402f24-0e37-4797-ac0d-ffc0e1254ae7",
+                    "account_id": "6f49fd80-ba9f-4af2-911b-59eb4bf0bf4f",
                     "transaction_type": "Credit",
                     "amount": "98.99",
                     "status": "Recorded",
