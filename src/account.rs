@@ -28,10 +28,6 @@ pub enum TransactionStatus {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Transaction {
     pub id: Uuid,
-    #[serde(serialize_with = "serialize_naivedate")]
-    #[serde(deserialize_with = "deserialize_naivedate")]
-    pub date: NaiveDate,
-	pub description: String,
     pub entries: Vec<Entry>,
 }
 
@@ -143,8 +139,6 @@ impl Schedule {
 
             let transaction = Transaction{
                 id: transaction_id,
-                description: self.description.clone(),
-                date:        next_date.clone(),
                 entries: entries,
             };
 

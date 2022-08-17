@@ -79,8 +79,6 @@ mod tests {
         let description = description_str;
         let t1 = Transaction{
                 id: transaction_id,
-                date,
-                description:description.to_string(),
                 entries: vec![
                     Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,transaction_type:AccountType::Debit,
                         amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None },
