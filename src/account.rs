@@ -94,7 +94,6 @@ impl Account {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ScheduleEnum{
-	Undefined,
 	Days,
 	Weeks,
 	Months,
@@ -171,9 +170,9 @@ impl Schedule {
                 let new_date: NaiveDate;
                 match self.period {
                     ScheduleEnum::Days => new_date = last_date.checked_add_signed(Duration::days(self.frequency)).unwrap(),
+                    ScheduleEnum::Weeks => new_date = last_date.checked_add_signed(Duration::days(self.frequency * 7)).unwrap(),
                     ScheduleEnum::Months => new_date = shift_months(last_date, self.frequency.try_into().unwrap()),
                     ScheduleEnum::Years => new_date = shift_years(last_date, self.frequency.try_into().unwrap()),
-                    _ => new_date = last_date
                 }
 
                 new_date
@@ -200,6 +199,11 @@ mod tests {
     #[test]
     fn test_daily() {
         test_get_next(ScheduleEnum::Days, 3, NaiveDate::from_ymd(2022, 3, 14))
+    }
+
+    #[test]
+    fn test_weekly() {
+        test_get_next(ScheduleEnum::Weeks, 3, NaiveDate::from_ymd(2022, 4, 1))
     }
 
     #[test]
