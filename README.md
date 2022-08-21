@@ -1,6 +1,6 @@
 ## Accounts
 
-Basic accounting entities written in Rust for use in a double entry accounts based system. Does not actually enforce double entry accounting standards, specifiying the second account in a transaction is optional.
+Basic accounting entities written in Rust for use in a double entry accounts based system. Optionally allows for single entry transactions.
 
 Supports generating transactions to help model future cash flows.
 
