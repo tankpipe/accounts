@@ -1,10 +1,14 @@
 use std::collections::HashMap;
-use chrono::NaiveDate;
+use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 use crate::{account::{Account, Schedule, Transaction, Entry}, scheduler::{Scheduler}};
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq  )]
+pub struct Settings {
+    pub require_double_entry: bool,
+}
 
 /// Book of accounts a.k.a The Books.
 #[derive(Serialize, Deserialize)]
@@ -13,7 +17,8 @@ pub struct Books {
     pub name: String,
     accounts: HashMap<Uuid, Account>,
     scheduler: Scheduler,
-    transactions: Vec<Transaction>
+    transactions: Vec<Transaction>,
+    pub settings: Settings,
 }
 
 impl Books {
@@ -29,7 +34,9 @@ impl Books {
             id: Uuid::new_v4(),
             name: name.to_string(),
             accounts: HashMap::new(),
-            scheduler: Scheduler::build_empty(), transactions: Vec::new()}
+            scheduler: Scheduler::build_empty(), transactions: Vec::new(),
+            settings: Settings{ require_double_entry: false },
+        }
     }
 
     pub fn add_account(&mut self, account: Account) {
@@ -58,12 +65,16 @@ impl Books {
 
         for e in transaction.entries.as_slice() {
             if !self.valid_account_id(Some(e.account_id)) {
-                return Some(Err(BooksError::from_str("Invalid DR account")))
+                return Some(Err(BooksError{ error: format!("Account not found for id: {}", e.account_id) }))
             }
         }
-        if transaction.entries.len() < 1 {
+
+        if self.settings.require_double_entry && transaction.entries.len() < 2 {
+            return Some(Err(BooksError::from_str("A transaction needs at least two entries (double entry required is on).")))
+        } else if transaction.entries.len() < 1 {
             return Some(Err(BooksError::from_str("A transaction must have at least one entry")))
         }
+
         if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
             return Some(Err(BooksError::from_str("Invalid Account")))
         }
@@ -229,6 +240,31 @@ mod tests {
     }
 
     #[test]
+    fn test_double_entry_required() {
+        let (mut books, id1, id2) = setup_books();
+        books.settings.require_double_entry = true;
+        assert_eq!(0, books.transactions.len());
+        let mut t1 = build_transaction(Some(id1), Some(id2));
+        t1.entries.pop();
+        let result = books.add_transaction(t1);
+        assert_eq!("A transaction needs at least two entries (double entry required is on).".to_string(), result.err().unwrap().error);
+        assert_eq!(0, books.transactions.len());
+    }
+
+    #[test]
+    fn test_at_least_one_entry_required() {
+        let (mut books, id1, id2) = setup_books();
+        assert_eq!(0, books.transactions.len());
+        let mut t1 = build_transaction(Some(id1), Some(id2));
+        t1.entries.pop();
+        t1.entries.pop();
+        let result = books.add_transaction(t1);
+        assert_eq!("A transaction must have at least one entry".to_string(), result.err().unwrap().error);
+        assert_eq!(0, books.transactions.len());
+    }
+
+
+    #[test]
     fn test_add_transaction_no_cr_account() {
         let (mut books, id1, _) = setup_books();
         let t1 = build_transaction(Some(id1), None);
@@ -376,9 +412,8 @@ mod tests {
     fn test_add_schedule_no_account() {
         let (mut books, _id1, _id2) = setup_books();
         let st1 = build_schedule(None, None, NaiveDate::from_ymd(2022, 6, 4));
-        let _result = books.add_schedule(st1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "A transaction must have at least one account".to_string() });
-        assert!(matches!(expected, _result));
+        let result = books.add_schedule(st1);
+        assert_eq!("A schedule must have at least one account".to_string(), result.err().unwrap().error);
         assert_eq!(0, (&books.schedules()).len());
     }
 
