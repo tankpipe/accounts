@@ -39,15 +39,15 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, AccountType, TransactionStatus, Schedule, ScheduleEnum, Entry}};
+    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry}};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
         let mut books = Books::build_empty("My Books");
-        let dr_account1 = Account::create_new("Savings Account 1", AccountType::Debit);
+        let dr_account1 = Account::create_new("Savings Account 1", Side::Debit);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);
-        let cr_account1 = Account::create_new("Credit Account 1", AccountType::Credit);
+        let cr_account1 = Account::create_new("Credit Account 1", Side::Credit);
         let id2: Uuid = cr_account1.id;
         books.add_account(cr_account1);
         let date = NaiveDate::from_ymd(2022, 6, 4);
@@ -80,9 +80,9 @@ mod tests {
         let t1 = Transaction{
                 id: transaction_id,
                 entries: vec![
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,transaction_type:AccountType::Debit,
+                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,transaction_type:Side::Debit,
                         amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None },
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,transaction_type:AccountType::Credit,
+                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,transaction_type:Side::Credit,
                         amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None },
                 ]
             };

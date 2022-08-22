@@ -135,7 +135,7 @@ impl Books {
             .for_each(|t| t.account_entries(account_id)
                 .iter()
                 .for_each(|e|{
-                    if e.transaction_type == account.account_type {
+                    if e.transaction_type == account.normal_balance {
                         balance = balance + e.amount;
                     } else {
                         balance = balance - e.amount;
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_add_account(){
-        let a = Account::create_new("test account", AccountType::Credit);
+        let a = Account::create_new("test account", Side::Credit);
         let id1 = a.id;
         let mut b = Books::build_empty("My Books");
         b.add_account(a);
@@ -460,10 +460,10 @@ mod tests {
 
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty("My Books");
-        let dr_account1 = Account::create_new("Savings Account 1", AccountType::Debit);
+        let dr_account1 = Account::create_new("Savings Account 1", Side::Debit);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);
-        let cr_account1 = Account::create_new("Savings Account 2", AccountType::Debit);
+        let cr_account1 = Account::create_new("Savings Account 2", Side::Debit);
         let id2: Uuid = cr_account1.id;
         books.add_account(cr_account1);
         (books, id1, id2)
@@ -484,12 +484,12 @@ mod tests {
 
         if dr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
-                transaction_type:AccountType::Debit, amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                transaction_type:Side::Debit, amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
         }
 
         if cr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
-                transaction_type:AccountType::Credit,amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                transaction_type:Side::Credit,amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
         }
         t1
     }

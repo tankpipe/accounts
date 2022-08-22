@@ -13,7 +13,7 @@ use crate::serializer::*;
 /// Account models.
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq  )]
-pub enum AccountType {
+pub enum Side {
 	Debit,
 	Credit
 }
@@ -54,7 +54,7 @@ pub struct Entry {
 	pub date: NaiveDate,
 	pub description: String,
     pub account_id: Uuid,
-    pub transaction_type: AccountType,
+    pub transaction_type: Side,
     pub amount: Decimal,
     pub status: TransactionStatus,
     pub balance:     Option<Decimal>,
@@ -75,17 +75,17 @@ pub struct Transaction2 {
 pub struct Account {
     pub id: Uuid,
 	pub name: String,
-	pub account_type: AccountType,
+	pub normal_balance: Side,
 	pub balance: Decimal,
 	pub starting_balance: Decimal
 }
 
 impl Account {
-    pub fn create_new(name: &str, account_type: AccountType) -> Account {
+    pub fn create_new(name: &str, account_type: Side) -> Account {
         return Account{
             id: Uuid::new_v4(),
             name: name.to_string(),
-            account_type,
+            normal_balance: account_type,
             balance: dec!(0),
             starting_balance: dec!(0)
         }
@@ -129,11 +129,11 @@ impl Schedule {
             let transaction_id = Uuid::new_v4();
             let mut entries: Vec<Entry> = Vec::new();
             if self.dr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.dr_account_id.unwrap(), AccountType::Debit))
+                entries.push(self.build_entry(transaction_id, next_date, self.dr_account_id.unwrap(), Side::Debit))
             }
 
             if self.cr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.cr_account_id.unwrap(), AccountType::Credit))
+                entries.push(self.build_entry(transaction_id, next_date, self.cr_account_id.unwrap(), Side::Credit))
             }
 
             let transaction = Transaction{
@@ -148,7 +148,7 @@ impl Schedule {
         return None
     }
 
-    fn build_entry(&mut self, transaction_id: Uuid, next_date: NaiveDate, account_id: Uuid, transaction_type: AccountType) -> Entry {
+    fn build_entry(&mut self, transaction_id: Uuid, next_date: NaiveDate, account_id: Uuid, transaction_type: Side) -> Entry {
         Entry{
             id: Uuid::new_v4(),
             transaction_id: transaction_id,
