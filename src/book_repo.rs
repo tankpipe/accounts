@@ -39,15 +39,15 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry}};
+    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType}, book_repo::save_books};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
         let mut books = Books::build_empty("My Books");
-        let dr_account1 = Account::create_new("Savings Account 1", Side::Debit);
+        let dr_account1 = Account::create_new("Savings Account 1", AccountType::Asset);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);
-        let cr_account1 = Account::create_new("Credit Account 1", Side::Credit);
+        let cr_account1 = Account::create_new("Credit Account 1", AccountType::Liability);
         let id2: Uuid = cr_account1.id;
         books.add_account(cr_account1);
         let date = NaiveDate::from_ymd(2022, 6, 4);
@@ -93,7 +93,7 @@ mod tests {
         let books = build_books();
         let filepath = "books.json";
 
-        //save_books(filepath, &books);
+        let _ = save_books(filepath, &books);
 
         match File::open(filepath) {
             Err(why) => {

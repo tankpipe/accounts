@@ -135,7 +135,7 @@ impl Books {
             .for_each(|t| t.account_entries(account_id)
                 .iter()
                 .for_each(|e|{
-                    if e.transaction_type == account.normal_balance {
+                    if e.transaction_type == account.normal_balance() {
                         balance = balance + e.amount;
                     } else {
                         balance = balance - e.amount;
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_add_account(){
-        let a = Account::create_new("test account", Side::Credit);
+        let a = Account::create_new("test account", AccountType::Liability);
         let id1 = a.id;
         let mut b = Books::build_empty("My Books");
         b.add_account(a);
@@ -460,10 +460,10 @@ mod tests {
 
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty("My Books");
-        let dr_account1 = Account::create_new("Savings Account 1", Side::Debit);
+        let dr_account1 = Account::create_new("Savings Account 1", AccountType::Asset);
         let id1: Uuid = dr_account1.id;
         books.add_account(dr_account1);
-        let cr_account1 = Account::create_new("Savings Account 2", Side::Debit);
+        let cr_account1 = Account::create_new("Savings Account 2", AccountType::Asset);
         let id2: Uuid = cr_account1.id;
         books.add_account(cr_account1);
         (books, id1, id2)

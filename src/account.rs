@@ -72,23 +72,54 @@ pub struct Transaction2 {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct AccountCategory {
+    name: String,
+    normal_balance: Side,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum AccountType {
+    Asset,
+    Liability,
+    Revenue,
+    Expense,
+    Equity,
+}
+
+impl AccountType {
+    pub fn normal_balance(&self) -> Side {
+        match *self {
+            Self::Asset => Side::Debit,
+            Self::Expense => Side::Debit,
+            Self::Liability => Side::Credit,
+            Self::Revenue => Side::Credit,
+            Self::Equity => Side::Credit,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: Uuid,
 	pub name: String,
-	pub normal_balance: Side,
+	pub account_type: AccountType,
 	pub balance: Decimal,
 	pub starting_balance: Decimal
 }
 
 impl Account {
-    pub fn create_new(name: &str, account_type: Side) -> Account {
+    pub fn create_new(name: &str, account_type: AccountType) -> Account {
         return Account{
             id: Uuid::new_v4(),
             name: name.to_string(),
-            normal_balance: account_type,
+            account_type,
             balance: dec!(0),
-            starting_balance: dec!(0)
+            starting_balance: dec!(0),
         }
+    }
+
+    pub fn normal_balance(&self) -> Side {
+        self.account_type.normal_balance()
     }
 }
 
