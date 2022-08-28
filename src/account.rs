@@ -18,6 +18,15 @@ pub enum Side {
 	Credit
 }
 
+impl Side {
+    pub fn opposite(&self) -> Side {
+        match self {
+            Self::Debit => Side::Credit,
+            Self::Credit => Side::Debit
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Debug,Serialize, Deserialize)]
 pub enum TransactionStatus {
 	Recorded,
