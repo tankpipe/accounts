@@ -120,13 +120,14 @@ impl Books {
             return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
         }
 
-        let account_transactions: Vec<Transaction> =
+        let mut account_transactions: Vec<Transaction> =
             self.transactions
                 .iter()
                 .filter(|t|t.involves_account(account_id))
                 .map(|t| t.clone())
                 .collect();
 
+        account_transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
         let account = self.accounts.get(&account_id).unwrap();
         let mut balance = account.starting_balance;
         let mut account_entries: Vec<Entry> = Vec::new();
