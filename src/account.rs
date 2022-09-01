@@ -105,6 +105,16 @@ impl AccountType {
             Self::Equity => Side::Credit,
         }
     }
+
+    pub fn order(&self) -> u8{
+        match *self {
+            Self::Asset => 0,
+            Self::Liability => 1,
+            Self::Revenue => 2,
+            Self::Expense => 3,
+            Self::Equity => 4,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
