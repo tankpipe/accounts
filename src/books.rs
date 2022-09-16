@@ -43,6 +43,21 @@ impl Books {
         self.accounts.insert (account.id, account);
     }
 
+    pub fn delete_account(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        if !self.accounts.contains_key(id) {
+            return Err(BooksError::from_str(format!("Account {} not found.", id).as_str()));
+        }
+
+        if self.transactions.iter().any(|t|t.involves_account(id)) {
+            return Err(BooksError::from_str(format!("Account {} can not be deleted as it has transactions.", id).as_str()));
+        }
+
+        self.accounts.remove(id);
+        Ok(())
+    }
+
+
+
     pub fn accounts(&self) -> Vec<Account> {
         let mut accounts_clone: Vec<Account> = Vec::new();
         for a in self.accounts.values() {
@@ -131,7 +146,7 @@ impl Books {
         let mut account_transactions: Vec<Transaction> =
             self.transactions
                 .iter()
-                .filter(|t|t.involves_account(account_id))
+                .filter(|t|t.involves_account(&account_id))
                 .map(|t| t.clone())
                 .collect();
 
@@ -236,6 +251,38 @@ mod tests {
 
         let a2 = &b.accounts()[0];
         assert_eq!(id1, a2.id);
+    }
+
+    #[test]
+    fn test_delete_account(){
+        let (mut books, id1, id2) = setup_books();
+        let _result = books.delete_account(&id1);
+        assert!(matches!((), _result));
+        assert!(books.accounts.get(&id1).is_none());
+        assert!(books.accounts.get(&id2).is_some());
+    }
+
+    #[test]
+    fn test_cannot_delete_account_with_transactions(){
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction(None, Some(id1));
+        books.add_transaction(t1).unwrap();
+        let result = books.delete_account(&id1);
+        assert_eq!(format!("Account {} can not be deleted as it has transactions.", id1).as_str(), result.err().unwrap().error);
+        assert!(books.accounts.get(&id1).is_some());
+        assert!(books.accounts.get(&id2).is_some());
+    }
+
+    #[test]
+    fn test_cannot_delete_with_invalid_account_id(){
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction(None, Some(id1));
+        books.add_transaction(t1).unwrap();
+        let id = &Uuid::new_v4();
+        let result = books.delete_account(id);
+        assert_eq!(format!("Account {} not found.", id  ).as_str(), result.err().unwrap().error);
+        assert!(books.accounts.get(&id1).is_some());
+        assert!(books.accounts.get(&id2).is_some());
     }
 
     #[test]

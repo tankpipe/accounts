@@ -48,9 +48,9 @@ impl Transaction {
                 .collect::<Vec<Entry>>()
     }
 
-    pub fn involves_account(&self, account_id: Uuid) -> bool {
+    pub fn involves_account(&self, account_id: &Uuid) -> bool {
         self.entries.iter()
-                .any(|e| e.account_id == account_id)
+                .any(|e| e.account_id == *account_id)
     }
 }
 
