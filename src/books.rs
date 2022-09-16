@@ -63,6 +63,7 @@ impl Books {
         for a in self.accounts.values() {
             accounts_clone.push(a.clone());
         }
+
         accounts_clone.sort_by(|a, b| {
             let result = a.account_type.order().cmp(&b.account_type.order());
             if result == Ordering::Equal {
