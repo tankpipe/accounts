@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, cmp::Ordering};
 use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -63,6 +63,13 @@ impl Books {
         for a in self.accounts.values() {
             accounts_clone.push(a.clone());
         }
+        accounts_clone.sort_by(|a, b| {
+            let result = a.account_type.order().cmp(&b.account_type.order());
+            if result == Ordering::Equal {
+                return a.name.cmp(&b.name)
+            }
+            return result
+        });
         accounts_clone
     }
 
