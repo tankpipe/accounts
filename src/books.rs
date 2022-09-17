@@ -56,8 +56,6 @@ impl Books {
         Ok(())
     }
 
-
-
     pub fn accounts(&self) -> Vec<Account> {
         let mut accounts_clone: Vec<Account> = Vec::new();
         for a in self.accounts.values() {
@@ -117,8 +115,18 @@ impl Books {
             Err(BooksError { error: "Transaction not found".to_string() })
         }
 
-
     }
+
+    pub fn delete_transaction(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        if let Some(index) = self.transactions.iter().position(|t| t.id == *id) {
+            println!("remove: {:?}", index);
+            self.transactions.remove(index);
+            Ok(())
+        } else {
+            return Err(BooksError::from_str(format!("Transaction {} not found.", id).as_str()));
+        }
+    }
+
 
     pub fn transactions(&self) -> &[Transaction] {
         self.transactions.as_slice()
@@ -369,6 +377,32 @@ mod tests {
         assert!(matches!(expected, _result));
         assert_eq!(0, (&books.transactions()).len());
     }
+
+    #[test]
+    fn test_delete_transaction() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction(Some(id1), Some(id2));
+        let t1_id = t1.id;
+        books.add_transaction(t1).unwrap();
+
+        let _result = books.delete_transaction(&t1_id);
+        let expected: Result<(), BooksError> = Ok(());
+        assert!(matches!(expected, _result));
+        assert_eq!(0, books.transactions.len());
+    }
+
+    #[test]
+    fn test_delete_invalid_transaction() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction(Some(id1), Some(id2));
+        books.add_transaction(t1).unwrap();
+
+        let id = &Uuid::new_v4();
+        let result = books.delete_transaction(&id);
+        assert_eq!(format!("Transaction {} not found.", id  ).as_str(), result.err().unwrap().error);
+        assert_eq!(1, books.transactions.len());
+    }
+
 
     #[test]
     fn test_account_transactions() {
