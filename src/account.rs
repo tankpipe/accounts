@@ -66,7 +66,7 @@ pub struct Entry {
     pub transaction_type: Side,
     pub amount: Decimal,
     pub status: TransactionStatus,
-    pub balance:     Option<Decimal>,
+    pub balance: Option<Decimal>,
     pub schedule_id: Option<Uuid>
 }
 
