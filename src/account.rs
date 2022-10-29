@@ -142,6 +142,16 @@ impl Account {
     }
 }
 
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScheduleEntry {
+    pub schedule_id: Uuid,
+	pub description: String,
+    pub account_id: Uuid,
+    pub transaction_type: Side,
+    pub amount: Decimal,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ScheduleEnum{
 	Days,
@@ -165,10 +175,7 @@ pub struct Schedule {
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     pub last_date: Option<NaiveDate>,
-	pub amount: Decimal,
-	pub description: String,
-	pub dr_account_id: Option<Uuid>,
-	pub cr_account_id: Option<Uuid>
+    pub entries: Vec<ScheduleEntry>
 }
 
 impl Schedule {
@@ -177,14 +184,9 @@ impl Schedule {
 
         if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
             let transaction_id = Uuid::new_v4();
-            let mut entries: Vec<Entry> = Vec::new();
-            if self.dr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.dr_account_id.unwrap(), Side::Debit))
-            }
-
-            if self.cr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.cr_account_id.unwrap(), Side::Credit))
-            }
+            let entries = self.entries.iter()
+                .map(|e| self.build_entry(transaction_id, next_date, e))
+                .collect();
 
             let transaction = Transaction{
                 id: transaction_id,
@@ -198,14 +200,14 @@ impl Schedule {
         return None
     }
 
-    fn build_entry(&mut self, transaction_id: Uuid, next_date: NaiveDate, account_id: Uuid, transaction_type: Side) -> Entry {
+    fn build_entry(&self, transaction_id: Uuid, next_date: NaiveDate, entry: &ScheduleEntry) -> Entry {
         Entry{
             id: Uuid::new_v4(),
             transaction_id: transaction_id,
-            description: self.description.clone(),
-            amount: self.amount.clone(),
-            account_id: account_id,
-            transaction_type: transaction_type,
+            description: entry.description.clone(),
+            amount: entry.amount.clone(),
+            account_id: entry.account_id,
+            transaction_type: entry.transaction_type,
             date:        next_date.clone(),
             status:      TransactionStatus::Predicted,
             balance:     None,
@@ -245,6 +247,9 @@ mod tests {
     use crate::account::Schedule;
     use crate::account::TransactionStatus;
 
+    use super::ScheduleEntry;
+    use super::Side;
+
 
     #[test]
     fn test_daily() {
@@ -273,8 +278,8 @@ mod tests {
         let mut next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
-        assert_eq!(s.description, next.entries[0].description);
-        assert_eq!(s.amount, next.entries[0].amount);
+        assert_eq!(s.entries[0].description, next.entries[0].description);
+        assert_eq!(s.entries[0].amount, next.entries[0].amount);
         assert_eq!(TransactionStatus::Predicted, next.entries[0].status);
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
@@ -310,7 +315,7 @@ mod tests {
     }
 
     fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {
-        let s= Schedule{
+        let mut s= Schedule{
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
             period,
@@ -318,11 +323,26 @@ mod tests {
             start_date:   NaiveDate::from_ymd(2022, 3, 11),
             end_date:   None,
             last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
-            amount:      dec!(100.99),
-            description: "stes1".to_string(),
-            dr_account_id: Some(Uuid::new_v4()),
-            cr_account_id: Some(Uuid::new_v4())
+            entries: Vec::new()
+            // amount:      dec!(100.99),
+            // description: "stes1".to_string(),
+            // dr_account_id: Some(Uuid::new_v4()),
+            // cr_account_id: Some(Uuid::new_v4())
         };
+        s.entries.push( ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            transaction_type: Side::Debit,
+            schedule_id: s.id,
+        });
+        s.entries.push( ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            transaction_type: Side::Credit,
+            schedule_id: s.id,
+        });
         return s
     }
 

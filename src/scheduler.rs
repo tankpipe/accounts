@@ -80,34 +80,60 @@ mod tests {
         };
 		let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
+        let s_id_1 = Uuid::new_v4();
         scheduler.schedules.push(
             Schedule {
-                id: Uuid::new_v4(),
+                id: s_id_1,
                 name: "S_1".to_string(),
                 period: ScheduleEnum::Months,
                 frequency: 3,
                 start_date: NaiveDate::from_ymd(2022, 3, 11),
                 end_date: None,
                 last_date: None,
-                amount: dec!(100.99),
-                description: "st test 1".to_string(),
-                dr_account_id: Some(id1),
-                cr_account_id: Some(id2)
+                entries: vec![
+                    ScheduleEntry {
+                        amount: dec!(100.99),
+                        description: "st test 1".to_string(),
+                        account_id: id1,
+                        transaction_type: Side::Debit,
+                        schedule_id: s_id_1,
+                    },
+                    ScheduleEntry {
+                        amount: dec!(100.99),
+                        description: "st test 1".to_string(),
+                        account_id: id2,
+                        transaction_type: Side::Credit,
+                        schedule_id: s_id_1,
+                    }
+                ]
             });
 
+        let s_id_2 = Uuid::new_v4();
         scheduler.schedules.push(
             Schedule {
-                id: Uuid::new_v4(),
+                id: s_id_2,
                 name: "S_2".to_string(),
                 period: ScheduleEnum::Days,
                 frequency: 45,
                 start_date: NaiveDate::from_ymd(2022, 3, 11),
                 end_date: Some(NaiveDate::from_ymd(2023, 1, 20)),
                 last_date: None,
-                amount: dec!(20.23),
-                description: "st test 2".to_string(),
-                dr_account_id: Some(id2),
-                cr_account_id: Some(id1)
+                entries: vec![
+                    ScheduleEntry {
+                        amount: dec!(20.23),
+                        description: "st test 2".to_string(),
+                        account_id: id2,
+                        transaction_type: Side::Debit,
+                        schedule_id: s_id_2,
+                    },
+                    ScheduleEntry {
+                        amount: dec!(100.99),
+                        description: "st test 2".to_string(),
+                        account_id: id1,
+                        transaction_type: Side::Credit,
+                        schedule_id: s_id_2,
+                    }
+                ]
             });
 
         let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));

@@ -193,15 +193,17 @@ impl Books {
     }
 
     fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
-        if !self.valid_account_id(schedule.dr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid DR account")))
+
+        if schedule.entries.len() < 1 {
+            return Some(Err(BooksError::from_str("A schedule must have at least one transaction entry")))
         }
-        if !self.valid_account_id(schedule.cr_account_id) {
-            return Some(Err(BooksError::from_str("Invalid CR account")))
+
+        for e in schedule.entries.iter() {
+            if !self.valid_account_id(Some(e.account_id)) {
+                return Some(Err(BooksError::from_str(format!("Invalid account: {}", e.account_id).as_str())))
+            }
         }
-        if schedule.dr_account_id.is_none() && schedule.cr_account_id.is_none() {
-            return Some(Err(BooksError::from_str("A schedule must have at least one account")))
-        }
+
         None
     }
 
@@ -243,6 +245,7 @@ impl BooksError {
 #[cfg(test)]
 
 mod tests {
+    use rust_decimal::Decimal;
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
@@ -457,7 +460,7 @@ mod tests {
     #[test]
     fn test_add_schedule() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
         assert!(matches!(expected, _result));
@@ -467,21 +470,21 @@ mod tests {
     #[test]
     fn test_update_schedule() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
         let mut st1_copy = st1.clone();
         let _result = books.add_schedule(st1);
 
-        st1_copy.description = "test changed".to_string();
+        st1_copy.entries[0].description = "test changed".to_string();
         let _result = books.update_schedule(st1_copy);
         assert_eq!(1, (books.schedules()).len());
-        assert_eq!("test changed", books.schedules()[0].description);
+        assert_eq!("test changed", books.schedules()[0].entries[0].description);
     }
 
 
     #[test]
     fn test_add_schedule_invalid_dr_account() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Ok(());
         assert!(matches!(expected, _result));
@@ -491,7 +494,7 @@ mod tests {
     #[test]
     fn test_add_schedule_invalid_cr_account() {
         let (mut books, id1, _) = setup_books();
-        let st1 = build_schedule(Some(id1), Some(Uuid::new_v4()), NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, Uuid::new_v4(), NaiveDate::from_ymd(2022, 6, 4));
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
         assert!(matches!(expected, _result));
@@ -499,46 +502,15 @@ mod tests {
     }
 
     #[test]
-    fn test_add_schedule_no_account() {
-        let (mut books, _id1, _id2) = setup_books();
-        let st1 = build_schedule(None, None, NaiveDate::from_ymd(2022, 6, 4));
-        let result = books.add_schedule(st1);
-        assert_eq!("A schedule must have at least one account".to_string(), result.err().unwrap().error);
-        assert_eq!(0, (&books.schedules()).len());
-    }
-
-    #[test]
 	fn test_generate() {
 		let (mut books, id1, id2) = setup_books();
         let _result = books.add_schedule(
-            Schedule {
-                id: Uuid::new_v4(),
-                name: "S_1".to_string(),
-                period: ScheduleEnum::Months,
-                frequency: 3,
-                start_date:   NaiveDate::from_ymd(2022, 3, 11),
-                end_date: None,
-                last_date:   None,
-                amount:      dec!(100.99),
-                description: "st test 1".to_string(),
-                dr_account_id: Some(id1),
-                cr_account_id: Some(id2)
-            });
+            build_schedule(id1, id2, NaiveDate::from_ymd(2022, 3, 11), "S_1", "st test 1", dec!(100.99), 3, ScheduleEnum::Months)
+        );
 
-            let _result = books.add_schedule(
-                Schedule {
-                    id: Uuid::new_v4(),
-                    name: "S_2".to_string(),
-                    period: ScheduleEnum::Days,
-                    frequency: 45,
-                    start_date:   NaiveDate::from_ymd(2022, 3, 11),
-                    end_date: None,
-                    last_date:   None,
-                    amount:      dec!(20.23),
-                    description: "st test 2".to_string(),
-                    dr_account_id: Some(id2),
-                    cr_account_id: Some(id1)
-                });
+        let _result = books.add_schedule(
+            build_schedule(id2, id1, NaiveDate::from_ymd(2022, 3, 11), "S_2", "st test 2", dec!(20.23), 45, ScheduleEnum::Days)
+        );
 
         assert_eq!(0, books.transactions.len());
         books.generate(NaiveDate::from_ymd(2023, 3, 11));
@@ -584,21 +556,37 @@ mod tests {
         t1
     }
 
-    fn build_schedule(id1: Option<Uuid>, id2: Option<Uuid>, start_date: NaiveDate) -> Schedule {
-        let s1 = Schedule {
-            id: Uuid::new_v4(),
-            name: "Reoccuring transaction".to_string(),
+    fn build_schedule_std(id1: Uuid, id2: Uuid, start_date: NaiveDate) -> Schedule {
+        build_schedule(id1, id2, start_date, "Reocurring transaction", "Reocurring transaction", dec!(100), 1, ScheduleEnum::Months)
+    }
+
+    fn build_schedule(id1: Uuid, id2: Uuid, start_date: NaiveDate, name: &str, description: &str, amount: Decimal, frequency: i64, period: ScheduleEnum) -> Schedule {
+        let s_id_1 = Uuid::new_v4();
+        Schedule {
+            id: s_id_1,
+            name: name.to_string(),
             start_date,
             end_date: None,
             last_date: None,
-            description: "Reoccuring transaction".to_string(),
-            dr_account_id: id1,
-            cr_account_id: id2,
-            amount: dec!(100),
-            frequency: 1,
-            period: ScheduleEnum::Months
-        };
-        s1
+            frequency,
+            period,
+            entries: vec![
+                    ScheduleEntry {
+                        amount,
+                        description: description.to_string(),
+                        account_id: id1,
+                        transaction_type: Side::Debit,
+                        schedule_id: s_id_1,
+                    },
+                    ScheduleEntry {
+                        amount,
+                        description: description.to_string(),
+                        account_id: id2,
+                        transaction_type: Side::Credit,
+                        schedule_id: s_id_1,
+                    }
+                ]
+        }
     }
 
 }
