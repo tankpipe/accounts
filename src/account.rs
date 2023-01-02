@@ -3,6 +3,7 @@ use chronoutil::shift_months;
 use chronoutil::shift_years;
 use rust_decimal::prelude::*;
 use chrono::{NaiveDate};
+use chrono::Datelike;
 use serde::Serialize;
 use uuid::Uuid;
 use rust_decimal_macros::dec;
@@ -152,7 +153,7 @@ pub struct ScheduleEntry {
     pub amount: Decimal,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScheduleEnum{
 	Days,
 	Weeks,
@@ -219,19 +220,27 @@ impl Schedule {
         match self.last_date {
            Some(d) => {
                 let last_date = d;
-                let new_date: NaiveDate;
+                let mut new_date: NaiveDate;
                 match self.period {
                     ScheduleEnum::Days => new_date = last_date.checked_add_signed(Duration::days(self.frequency)).unwrap(),
                     ScheduleEnum::Weeks => new_date = last_date.checked_add_signed(Duration::days(self.frequency * 7)).unwrap(),
                     ScheduleEnum::Months => new_date = shift_months(last_date, self.frequency.try_into().unwrap()),
                     ScheduleEnum::Years => new_date = shift_years(last_date, self.frequency.try_into().unwrap()),
                 }
-
+                if (self.period == ScheduleEnum::Months || self.period == ScheduleEnum::Years) && new_date.day() < self.start_date.day() {
+                    let new_month = new_date.month();
+                    let mut result = new_date.checked_add_signed(Duration::days(1));
+                    while result.is_some() && result.unwrap().month() == new_month {
+                        new_date = result.unwrap();
+                        result = new_date.checked_add_signed(Duration::days(1));
+                    }
+                }
                 new_date
             },
             None => self.start_date
         }
     }
+
 }
 
 
@@ -265,6 +274,29 @@ mod tests {
     fn test_monthly() {
         test_get_next(ScheduleEnum::Months, 3, NaiveDate::from_ymd(2022, 6, 11))
     }
+
+    #[test]
+    fn test_ambiguous_monthly() {
+        let period = ScheduleEnum::Months;
+        let frequency = 1;
+        let expected_date = NaiveDate::from_ymd(2023, 3, 31);
+        let s = Schedule{
+            id: Uuid::new_v4(),
+            name: "ST 1".to_string(),
+            period,
+            frequency,
+            start_date:   NaiveDate::from_ymd(2023, 1, 31),
+            end_date:   None,
+            last_date:   Some(NaiveDate::from_ymd(2023, 2, 28)),
+            entries: Vec::new()
+        };
+
+        let last_at_start = s.last_date;
+        let next_date = s.get_next_date();
+        assert_eq!(expected_date, next_date);
+        assert_eq!(last_at_start, s.last_date);
+    }
+
 
     #[test]
     fn test_yearly() {
