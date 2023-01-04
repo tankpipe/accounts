@@ -3,6 +3,7 @@ use chronoutil::shift_months;
 use chronoutil::shift_years;
 use rust_decimal::prelude::*;
 use chrono::{NaiveDate};
+use chrono::Datelike;
 use serde::Serialize;
 use uuid::Uuid;
 use rust_decimal_macros::dec;
@@ -142,7 +143,17 @@ impl Account {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScheduleEntry {
+    pub schedule_id: Uuid,
+	pub description: String,
+    pub account_id: Uuid,
+    pub transaction_type: Side,
+    pub amount: Decimal,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScheduleEnum{
 	Days,
 	Weeks,
@@ -165,10 +176,7 @@ pub struct Schedule {
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     pub last_date: Option<NaiveDate>,
-	pub amount: Decimal,
-	pub description: String,
-	pub dr_account_id: Option<Uuid>,
-	pub cr_account_id: Option<Uuid>
+    pub entries: Vec<ScheduleEntry>
 }
 
 impl Schedule {
@@ -177,14 +185,9 @@ impl Schedule {
 
         if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
             let transaction_id = Uuid::new_v4();
-            let mut entries: Vec<Entry> = Vec::new();
-            if self.dr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.dr_account_id.unwrap(), Side::Debit))
-            }
-
-            if self.cr_account_id.is_some() {
-                entries.push(self.build_entry(transaction_id, next_date, self.cr_account_id.unwrap(), Side::Credit))
-            }
+            let entries = self.entries.iter()
+                .map(|e| self.build_entry(transaction_id, next_date, e))
+                .collect();
 
             let transaction = Transaction{
                 id: transaction_id,
@@ -198,14 +201,14 @@ impl Schedule {
         return None
     }
 
-    fn build_entry(&mut self, transaction_id: Uuid, next_date: NaiveDate, account_id: Uuid, transaction_type: Side) -> Entry {
+    fn build_entry(&self, transaction_id: Uuid, next_date: NaiveDate, entry: &ScheduleEntry) -> Entry {
         Entry{
             id: Uuid::new_v4(),
             transaction_id: transaction_id,
-            description: self.description.clone(),
-            amount: self.amount.clone(),
-            account_id: account_id,
-            transaction_type: transaction_type,
+            description: entry.description.clone(),
+            amount: entry.amount.clone(),
+            account_id: entry.account_id,
+            transaction_type: entry.transaction_type,
             date:        next_date.clone(),
             status:      TransactionStatus::Predicted,
             balance:     None,
@@ -217,19 +220,27 @@ impl Schedule {
         match self.last_date {
            Some(d) => {
                 let last_date = d;
-                let new_date: NaiveDate;
+                let mut new_date: NaiveDate;
                 match self.period {
                     ScheduleEnum::Days => new_date = last_date.checked_add_signed(Duration::days(self.frequency)).unwrap(),
                     ScheduleEnum::Weeks => new_date = last_date.checked_add_signed(Duration::days(self.frequency * 7)).unwrap(),
                     ScheduleEnum::Months => new_date = shift_months(last_date, self.frequency.try_into().unwrap()),
                     ScheduleEnum::Years => new_date = shift_years(last_date, self.frequency.try_into().unwrap()),
                 }
-
+                if (self.period == ScheduleEnum::Months || self.period == ScheduleEnum::Years) && new_date.day() < self.start_date.day() {
+                    let new_month = new_date.month();
+                    let mut result = new_date.checked_add_signed(Duration::days(1));
+                    while result.is_some() && result.unwrap().month() == new_month {
+                        new_date = result.unwrap();
+                        result = new_date.checked_add_signed(Duration::days(1));
+                    }
+                }
                 new_date
             },
             None => self.start_date
         }
     }
+
 }
 
 
@@ -244,6 +255,9 @@ mod tests {
     use crate::account::ScheduleEnum;
     use crate::account::Schedule;
     use crate::account::TransactionStatus;
+
+    use super::ScheduleEntry;
+    use super::Side;
 
 
     #[test]
@@ -262,6 +276,29 @@ mod tests {
     }
 
     #[test]
+    fn test_ambiguous_monthly() {
+        let period = ScheduleEnum::Months;
+        let frequency = 1;
+        let expected_date = NaiveDate::from_ymd(2023, 3, 31);
+        let s = Schedule{
+            id: Uuid::new_v4(),
+            name: "ST 1".to_string(),
+            period,
+            frequency,
+            start_date:   NaiveDate::from_ymd(2023, 1, 31),
+            end_date:   None,
+            last_date:   Some(NaiveDate::from_ymd(2023, 2, 28)),
+            entries: Vec::new()
+        };
+
+        let last_at_start = s.last_date;
+        let next_date = s.get_next_date();
+        assert_eq!(expected_date, next_date);
+        assert_eq!(last_at_start, s.last_date);
+    }
+
+
+    #[test]
     fn test_yearly() {
         test_get_next(ScheduleEnum::Years, 1, NaiveDate::from_ymd(2023, 3, 11))
     }
@@ -273,8 +310,8 @@ mod tests {
         let mut next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
-        assert_eq!(s.description, next.entries[0].description);
-        assert_eq!(s.amount, next.entries[0].amount);
+        assert_eq!(s.entries[0].description, next.entries[0].description);
+        assert_eq!(s.entries[0].amount, next.entries[0].amount);
         assert_eq!(TransactionStatus::Predicted, next.entries[0].status);
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
@@ -310,7 +347,7 @@ mod tests {
     }
 
     fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {
-        let s= Schedule{
+        let mut s= Schedule{
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
             period,
@@ -318,11 +355,26 @@ mod tests {
             start_date:   NaiveDate::from_ymd(2022, 3, 11),
             end_date:   None,
             last_date:   Some(NaiveDate::from_ymd(2022, 3, 11)),
-            amount:      dec!(100.99),
-            description: "stes1".to_string(),
-            dr_account_id: Some(Uuid::new_v4()),
-            cr_account_id: Some(Uuid::new_v4())
+            entries: Vec::new()
+            // amount:      dec!(100.99),
+            // description: "stes1".to_string(),
+            // dr_account_id: Some(Uuid::new_v4()),
+            // cr_account_id: Some(Uuid::new_v4())
         };
+        s.entries.push( ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            transaction_type: Side::Debit,
+            schedule_id: s.id,
+        });
+        s.entries.push( ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            transaction_type: Side::Credit,
+            schedule_id: s.id,
+        });
         return s
     }
 

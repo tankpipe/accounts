@@ -39,7 +39,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType}, book_repo::save_books};
+    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType, ScheduleEntry}, book_repo::save_books};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -57,18 +57,31 @@ mod tests {
         let t2_date = NaiveDate::from_ymd(2022, 6, 5);
         let t2 = build_transaction(id2, id1, "Gave some moneys back", t2_date, dec!(98.99));
         books.add_transaction(t2).unwrap();
+        let s_id_1 = Uuid::new_v4();
         let st = Schedule{
-            id: Uuid::new_v4(),
+            id: s_id_1,
             name: "Some income".to_string(),
             period: ScheduleEnum::Months,
             frequency: 1,
             start_date: NaiveDate::from_ymd(2022, 6, 4),
             end_date: None,
             last_date: Some(NaiveDate::from_ymd(2022, 6, 4)),
-            amount: dec!(200),
-            description: "Money in".to_string(),
-            dr_account_id: Some(id1),
-            cr_account_id: Some(id2)
+            entries: vec![
+                ScheduleEntry {
+                    amount: dec!(200),
+                    description: "Money in".to_string(),
+                    account_id: id1,
+                    transaction_type: Side::Debit,
+                    schedule_id: s_id_1,
+                },
+                ScheduleEntry {
+                    amount: dec!(200),
+                    description: "Money in".to_string(),
+                    account_id: id2,
+                    transaction_type: Side::Credit,
+                    schedule_id: s_id_1,
+                }
+            ]
         };
         let _ = books.add_schedule(st);
         books
