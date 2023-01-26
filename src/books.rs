@@ -22,10 +22,10 @@ pub struct Books {
 }
 
 impl Books {
-	pub fn generate(&mut self, end_date: NaiveDate) {
-		self.transactions.append(&mut self.scheduler.generate(end_date));
+    pub fn generate(&mut self, end_date: NaiveDate) {
+        self.transactions.append(&mut self.scheduler.generate(end_date));
         self.transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
-	}
+    }
 }
 
 impl Books {
@@ -502,8 +502,8 @@ mod tests {
     }
 
     #[test]
-	fn test_generate() {
-		let (mut books, id1, id2) = setup_books();
+    fn test_generate() {
+        let (mut books, id1, id2) = setup_books();
         let _result = books.add_schedule(
             build_schedule(id1, id2, NaiveDate::from_ymd(2022, 3, 11), "S_1", "st test 1", dec!(100.99), 3, ScheduleEnum::Months)
         );
@@ -515,10 +515,10 @@ mod tests {
         assert_eq!(0, books.transactions.len());
         books.generate(NaiveDate::from_ymd(2023, 3, 11));
 
-		assert_eq!(14, books.transactions.len());
-		assert_eq!("st test 2", books.transactions[2].entries[0].description);
-		assert_eq!("st test 1", books.transactions[4].entries[0].description);
-	}
+        assert_eq!(14, books.transactions.len());
+        assert_eq!("st test 2", books.transactions[2].entries[0].description);
+        assert_eq!("st test 1", books.transactions[4].entries[0].description);
+    }
 
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty("My Books");
