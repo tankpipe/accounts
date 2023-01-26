@@ -15,8 +15,8 @@ use crate::serializer::*;
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq  )]
 pub enum Side {
-	Debit,
-	Credit
+    Debit,
+    Credit
 }
 
 impl Side {
@@ -30,9 +30,9 @@ impl Side {
 
 #[derive(Copy, Clone, PartialEq, Debug,Serialize, Deserialize)]
 pub enum TransactionStatus {
-	Recorded,
-	Predicted,
-	Reconsiled
+    Recorded,
+    Predicted,
+    Reconsiled
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -61,8 +61,8 @@ pub struct Entry {
     pub transaction_id: Uuid,
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
-	pub date: NaiveDate,
-	pub description: String,
+    pub date: NaiveDate,
+    pub description: String,
     pub account_id: Uuid,
     pub transaction_type: Side,
     pub amount: Decimal,
@@ -121,10 +121,10 @@ impl AccountType {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: Uuid,
-	pub name: String,
-	pub account_type: AccountType,
-	pub balance: Decimal,
-	pub starting_balance: Decimal
+    pub name: String,
+    pub account_type: AccountType,
+    pub balance: Decimal,
+    pub starting_balance: Decimal
 }
 
 impl Account {
@@ -147,7 +147,7 @@ impl Account {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ScheduleEntry {
     pub schedule_id: Uuid,
-	pub description: String,
+    pub description: String,
     pub account_id: Uuid,
     pub transaction_type: Side,
     pub amount: Decimal,
@@ -155,21 +155,21 @@ pub struct ScheduleEntry {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScheduleEnum{
-	Days,
-	Weeks,
-	Months,
-	Years
+    Days,
+    Weeks,
+    Months,
+    Years
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Schedule {
     pub id: Uuid,
-	pub name: String,
-	pub period: ScheduleEnum,
-	pub frequency: i64,
+    pub name: String,
+    pub period: ScheduleEnum,
+    pub frequency: i64,
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
-	pub start_date: NaiveDate,
+    pub start_date: NaiveDate,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     pub end_date: Option<NaiveDate>,
