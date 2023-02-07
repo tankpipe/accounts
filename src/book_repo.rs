@@ -2,7 +2,7 @@
 use std::{path::Path, fs::File, io::Read};
 use std::{io};
 
-use crate::books::Books;
+use crate::books::{Books, BooksError};
 
 /// Simple JSON file storage for Books.
 
@@ -26,8 +26,27 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
 }
 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
-    ::serde_json::to_writer(&File::create(path)?, &books)?;
+    let _ =::serde_json::to_writer(&File::create(path)?, &books)?;
     Ok(())
+}
+
+pub fn new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksError>{
+    let file_result = &File::options()
+            .write(true)
+            .create_new(true)
+            .open(path);
+
+    match file_result {
+        Ok(file) => {
+            _ = ::serde_json::to_writer(file, &books);
+            Ok(())
+        },
+        Err(e) => match e.kind() {
+            io::ErrorKind::AlreadyExists => Err(BooksError::from_str("A file using this name already exists")),
+            _ => Err(BooksError{ error: format!("Error while creating file: {:?}", e) })
+        }
+    }
+
 }
 
 #[cfg(test)]
