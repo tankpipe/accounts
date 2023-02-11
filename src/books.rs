@@ -182,6 +182,40 @@ impl Books {
         account_entries.sort_by(|a, b| a.date.cmp(&b.date));
         Ok(account_entries)
     }
+        /// Get a copy of the transactions with balances for a given Account.
+    pub fn account_transactions(&self, account_id: Uuid) -> Result<Vec<Transaction>, BooksError> {
+        if !self.accounts.contains_key(&account_id) {
+            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+        }
+
+        let mut account_transactions: Vec<Transaction> =
+            self.transactions
+                .iter()
+                .filter(|t|t.involves_account(&account_id))
+                .map(|t| t.clone())
+                .collect();
+
+        account_transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
+        let account = self.accounts.get(&account_id).unwrap();
+        let mut balance = account.starting_balance;
+        account_transactions
+            .iter()
+            .for_each(|t| t.account_entries(account_id)
+                .iter_mut()
+                .for_each(|e|{
+                    if e.transaction_type == account.normal_balance() {
+                        balance = balance + e.amount;
+                    } else {
+                        balance = balance - e.amount;
+                    };
+                    e.set_balance(Some(balance.clone()));
+                }
+                )
+            );
+
+        Ok(account_transactions)
+    }
+
 
     pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
