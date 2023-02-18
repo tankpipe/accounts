@@ -637,16 +637,18 @@ mod tests {
         let mut t1 = Transaction{
             id: transaction_id,
             entries: Vec::new(),
+            status: TransactionStatus::Recorded,
+            schedule_id: None
         };
 
         if dr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
-                transaction_type:Side::Debit, amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                transaction_type:Side::Debit, amount,balance:None })
         }
 
         if cr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
-                transaction_type:Side::Credit,amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                transaction_type:Side::Credit,amount,balance:None })
         }
         t1
     }

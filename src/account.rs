@@ -39,6 +39,8 @@ pub enum TransactionStatus {
 pub struct Transaction {
     pub id: Uuid,
     pub entries: Vec<Entry>,
+    pub status: TransactionStatus,
+    pub schedule_id: Option<Uuid>
 }
 
 impl Transaction {
@@ -70,7 +72,7 @@ impl Transaction {
             .iter()
             .find(|e| e.account_id == *account_id)
     }
-    
+
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -84,9 +86,7 @@ pub struct Entry {
     pub account_id: Uuid,
     pub transaction_type: Side,
     pub amount: Decimal,
-    pub status: TransactionStatus,
     pub balance: Option<Decimal>,
-    pub schedule_id: Option<Uuid>
 }
 
 impl Entry {
@@ -222,6 +222,8 @@ impl Schedule {
             let transaction = Transaction{
                 id: transaction_id,
                 entries: entries,
+                status: TransactionStatus::Predicted,
+                schedule_id: Some(self.id)
             };
 
             self.last_date = Some(next_date);
@@ -240,9 +242,7 @@ impl Schedule {
             account_id: entry.account_id,
             transaction_type: entry.transaction_type,
             date:        next_date.clone(),
-            status:      TransactionStatus::Predicted,
             balance:     None,
-            schedule_id: Some(self.id),
         }
     }
 
@@ -323,7 +323,7 @@ mod tests {
         let account2 = Account::create_new("Loan 1", super::AccountType::Liability);
         let transaction_id = Uuid::new_v4();
         let date = NaiveDate::from_ymd(2023, 2, 14);
-        let mut t = Transaction{ id: transaction_id, entries: [].to_vec()};
+        let mut t = Transaction{ id: transaction_id, entries: [].to_vec(), status: TransactionStatus::Recorded, schedule_id: None};
         t.entries.push(build_entry(transaction_id, date, "loan payment", account1.id,Side::Credit, dec!(100)));
         t.entries.push(build_entry(transaction_id, date, "loan payment", account2.id, Side::Debit, dec!(100)));
 
@@ -347,9 +347,7 @@ mod tests {
             account_id: account_id,
             transaction_type: entry_type,
             amount: amount,
-            status: TransactionStatus::Recorded,
-            balance: None,
-            schedule_id: None
+            balance: None
         }
     }
     #[test]
@@ -404,7 +402,7 @@ mod tests {
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
         assert_eq!(s.entries[0].description, next.entries[0].description);
         assert_eq!(s.entries[0].amount, next.entries[0].amount);
-        assert_eq!(TransactionStatus::Predicted, next.entries[0].status);
+        assert_eq!(TransactionStatus::Predicted, next.status);
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
@@ -435,7 +433,7 @@ mod tests {
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
         let next = s.schedule_next(max_date).unwrap();
         assert_eq!(s.start_date, next.entries[0].date);
-        assert_eq!(s.id, next.entries[0].schedule_id.unwrap());
+        assert_eq!(s.id, next.schedule_id.unwrap());
     }
 
     fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {

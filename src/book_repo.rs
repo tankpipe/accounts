@@ -113,10 +113,12 @@ mod tests {
                 id: transaction_id,
                 entries: vec![
                     Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,transaction_type:Side::Debit,
-                        amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None },
+                        amount,balance:None },
                     Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,transaction_type:Side::Credit,
-                        amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None },
-                ]
+                        amount,balance:None},
+                ],
+                status: TransactionStatus::Recorded,
+                schedule_id: None
             };
         t1
     }
