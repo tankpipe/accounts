@@ -2,7 +2,6 @@ use std::{collections::HashMap, cmp::Ordering};
 use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
-use rust_decimal_macros::dec;
 
 use crate::{account::{Account, Schedule, Transaction, Entry}, scheduler::{Scheduler}};
 
