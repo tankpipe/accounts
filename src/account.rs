@@ -31,9 +31,7 @@ impl Side {
 #[derive(Copy, Clone, PartialEq, Debug,Serialize, Deserialize)]
 pub enum TransactionStatus {
     Projected,
-    Recorded,
-    Reconsiled,
-    Predicted
+    Recorded
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
