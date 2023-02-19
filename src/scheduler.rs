@@ -95,14 +95,14 @@ mod tests {
                         amount: dec!(100.99),
                         description: "st test 1".to_string(),
                         account_id: id1,
-                        transaction_type: Side::Debit,
+                        entry_type: Side::Debit,
                         schedule_id: s_id_1,
                     },
                     ScheduleEntry {
                         amount: dec!(100.99),
                         description: "st test 1".to_string(),
                         account_id: id2,
-                        transaction_type: Side::Credit,
+                        entry_type: Side::Credit,
                         schedule_id: s_id_1,
                     }
                 ]
@@ -123,14 +123,14 @@ mod tests {
                         amount: dec!(20.23),
                         description: "st test 2".to_string(),
                         account_id: id2,
-                        transaction_type: Side::Debit,
+                        entry_type: Side::Debit,
                         schedule_id: s_id_2,
                     },
                     ScheduleEntry {
                         amount: dec!(100.99),
                         description: "st test 2".to_string(),
                         account_id: id1,
-                        transaction_type: Side::Credit,
+                        entry_type: Side::Credit,
                         schedule_id: s_id_2,
                     }
                 ]

@@ -90,14 +90,14 @@ mod tests {
                     amount: dec!(200),
                     description: "Money in".to_string(),
                     account_id: id1,
-                    transaction_type: Side::Debit,
+                    entry_type: Side::Debit,
                     schedule_id: s_id_1,
                 },
                 ScheduleEntry {
                     amount: dec!(200),
                     description: "Money in".to_string(),
                     account_id: id2,
-                    transaction_type: Side::Credit,
+                    entry_type: Side::Credit,
                     schedule_id: s_id_1,
                 }
             ]
@@ -112,9 +112,9 @@ mod tests {
         let t1 = Transaction{
                 id: transaction_id,
                 entries: vec![
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,transaction_type:Side::Debit,
+                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,entry_type:Side::Debit,
                         amount,balance:None },
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,transaction_type:Side::Credit,
+                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,entry_type:Side::Credit,
                         amount,balance:None},
                 ],
                 status: TransactionStatus::Recorded,

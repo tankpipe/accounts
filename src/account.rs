@@ -83,7 +83,7 @@ pub struct Entry {
     pub date: NaiveDate,
     pub description: String,
     pub account_id: Uuid,
-    pub transaction_type: Side,
+    pub entry_type: Side,
     pub amount: Decimal,
     pub balance: Option<Decimal>,
 }
@@ -96,7 +96,7 @@ impl Entry {
     pub fn update_balance(&mut self, prev_balance: Decimal, account: &Account) -> Decimal {
         assert_eq!(self.account_id, account.id, "Attempt made to update entry balance using incorrect account");
         let mut balance = prev_balance.clone();
-        if self.transaction_type == account.normal_balance() {
+        if self.entry_type == account.normal_balance() {
             balance = balance + self.amount;
         } else {
             balance = balance - self.amount;
@@ -178,7 +178,7 @@ pub struct ScheduleEntry {
     pub schedule_id: Uuid,
     pub description: String,
     pub account_id: Uuid,
-    pub transaction_type: Side,
+    pub entry_type: Side,
     pub amount: Decimal,
 }
 
@@ -239,7 +239,7 @@ impl Schedule {
             description: entry.description.clone(),
             amount: entry.amount.clone(),
             account_id: entry.account_id,
-            transaction_type: entry.transaction_type,
+            entry_type: entry.entry_type,
             date:        next_date.clone(),
             balance:     None,
         }
@@ -344,7 +344,7 @@ mod tests {
             date: date,
             description: description.to_string(),
             account_id: account_id,
-            transaction_type: entry_type,
+            entry_type,
             amount: amount,
             balance: None
         }
@@ -454,14 +454,14 @@ mod tests {
             amount: dec!(100.99),
             description: "stes1".to_string(),
             account_id: Uuid::new_v4(),
-            transaction_type: Side::Debit,
+            entry_type: Side::Debit,
             schedule_id: s.id,
         });
         s.entries.push( ScheduleEntry {
             amount: dec!(100.99),
             description: "stes1".to_string(),
             account_id: Uuid::new_v4(),
-            transaction_type: Side::Credit,
+            entry_type: Side::Credit,
             schedule_id: s.id,
         });
         return s

@@ -168,7 +168,7 @@ impl Books {
             .for_each(|t| t.account_entries(account_id)
                 .iter()
                 .for_each(|e|{
-                    if e.transaction_type == account.normal_balance() {
+                    if e.entry_type == account.normal_balance() {
                         balance = balance + e.amount;
                     } else {
                         balance = balance - e.amount;
@@ -643,12 +643,12 @@ mod tests {
 
         if dr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
-                transaction_type:Side::Debit, amount,balance:None })
+                entry_type:Side::Debit, amount,balance:None })
         }
 
         if cr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
-                transaction_type:Side::Credit,amount,balance:None })
+                entry_type:Side::Credit,amount,balance:None })
         }
         t1
     }
@@ -672,14 +672,14 @@ mod tests {
                         amount,
                         description: description.to_string(),
                         account_id: id1,
-                        transaction_type: Side::Debit,
+                        entry_type: Side::Debit,
                         schedule_id: s_id_1,
                     },
                     ScheduleEntry {
                         amount,
                         description: description.to_string(),
                         account_id: id2,
-                        transaction_type: Side::Credit,
+                        entry_type: Side::Credit,
                         schedule_id: s_id_1,
                     }
                 ]
