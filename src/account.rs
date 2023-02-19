@@ -30,9 +30,10 @@ impl Side {
 
 #[derive(Copy, Clone, PartialEq, Debug,Serialize, Deserialize)]
 pub enum TransactionStatus {
+    Projected,
     Recorded,
-    Predicted,
-    Reconsiled
+    Reconsiled,
+    Predicted
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -222,7 +223,7 @@ impl Schedule {
             let transaction = Transaction{
                 id: transaction_id,
                 entries: entries,
-                status: TransactionStatus::Predicted,
+                status: TransactionStatus::Projected,
                 schedule_id: Some(self.id)
             };
 
@@ -402,7 +403,7 @@ mod tests {
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
         assert_eq!(s.entries[0].description, next.entries[0].description);
         assert_eq!(s.entries[0].amount, next.entries[0].amount);
-        assert_eq!(TransactionStatus::Predicted, next.status);
+        assert_eq!(TransactionStatus::Projected, next.status);
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
