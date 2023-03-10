@@ -167,7 +167,7 @@ impl Books {
             .for_each(|t| t.account_entries(account_id)
                 .iter()
                 .for_each(|e|{
-                    if e.transaction_type == account.normal_balance() {
+                    if e.entry_type == account.normal_balance() {
                         balance = balance + e.amount;
                     } else {
                         balance = balance - e.amount;
@@ -182,6 +182,31 @@ impl Books {
         account_entries.sort_by(|a, b| a.date.cmp(&b.date));
         Ok(account_entries)
     }
+
+    /// Get a copy of the transactions with balances for a given Account.
+    pub fn account_transactions(&self, account_id: Uuid) -> Result<Vec<Transaction>, BooksError> {
+        if !self.accounts.contains_key(&account_id) {
+            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+        }
+
+        let mut account_transactions: Vec<Transaction> =
+            self.transactions
+                .iter()
+                .filter(|t|t.involves_account(&account_id))
+                .map(|t| t.clone())
+                .collect();
+
+        account_transactions.sort_by(
+            |a, b| a.find_entry_by_account(&account_id).unwrap().date.cmp(&b.find_entry_by_account(&account_id).unwrap().date));
+        let account = self.accounts.get(&account_id).unwrap();
+        let mut balance = account.starting_balance;
+
+        for i in 0..account_transactions.len() {
+            balance = account_transactions[i].update_balance(balance, account);
+        }
+        Ok(account_transactions)
+    }
+
 
     pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         if let Some(value) = self.validate_schedule(&schedule) {
@@ -408,7 +433,7 @@ mod tests {
 
 
     #[test]
-    fn test_account_transactions() {
+    fn test_account_entries() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
         let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd(2022, 6, 5));
@@ -457,6 +482,75 @@ mod tests {
 
 
     }
+
+    #[test]
+    fn test_account_transaction() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1a1e1 = &t1.account_entries(id1)[0];
+        let _t1a2e1 = &t1.account_entries(id2)[0];
+        books.add_transaction(t1).unwrap();
+        let a1_entries = books.account_transactions(id1).unwrap();
+        assert_eq!(1, a1_entries.len());
+
+        let entry1 = &a1_entries[0].account_entries(id1)[0];
+        assert_eq!(t1a1e1.id, entry1.id);
+        assert_eq!(dec!(10000), entry1.balance.unwrap());
+    }
+
+
+
+    #[test]
+    fn test_account_transactions() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd(2022, 6, 5));
+        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
+        let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd(2022, 7, 2));
+        let t1a1e1 = &t1.account_entries(id1)[0];
+        let t3a1e3 = &t3.account_entries(id1)[0];
+        let t4a1e4 = &t4.account_entries(id1)[0];
+        let t1a2e1 = &t1.account_entries(id2)[0];
+        let t2a2e1 = &t2.account_entries(id2)[0];
+        let t4a2e1 = &t4.account_entries(id2)[0];
+        books.add_transaction(t1).unwrap();
+        books.add_transaction(t2).unwrap();
+        books.add_transaction(t3).unwrap();
+        books.add_transaction(t4).unwrap();
+        let a1_entries = books.account_transactions(id1).unwrap();
+        assert_eq!(3, a1_entries.len());
+
+        let entry1 = &a1_entries[0].account_entries(id1)[0];
+        assert_eq!(t1a1e1.id, entry1.id);
+        assert_eq!(dec!(10000), entry1.balance.unwrap());
+
+        let entry2 = &a1_entries[1].account_entries(id1)[0];
+        assert_eq!(t3a1e3.id, entry2.id);
+        assert_eq!(dec!(20000), entry2.balance.unwrap());
+
+        let entry3 = &a1_entries[2].account_entries(id1)[0];
+        println!("{:?}", entry3);
+        assert_eq!(t4a1e4.id, entry3.id);
+        assert_eq!(dec!(10000), entry3.balance.unwrap());
+
+        let a2_entries = books.account_transactions(id2).unwrap();
+        assert_eq!(3, a2_entries.len());
+
+        let entry21 = &a2_entries[0].account_entries(id2)[0];
+        assert_eq!(t1a2e1.id, entry21.id);
+        assert_eq!(dec!(-10000), entry21.balance.unwrap());
+
+        let entry22 = &a2_entries[1].account_entries(id2)[0];
+        assert_eq!(t2a2e1.id, entry22.id);
+        assert_eq!(dec!(-20000), entry22.balance.unwrap());
+
+        let entry23 = &a2_entries[2].account_entries(id2)[0];
+        assert_eq!(t4a2e1.id, entry23.id);
+        assert_eq!(dec!(-10000), entry23.balance.unwrap());
+
+
+    }
+
     #[test]
     fn test_add_schedule() {
         let (mut books, id1, id2) = setup_books();
@@ -542,16 +636,18 @@ mod tests {
         let mut t1 = Transaction{
             id: transaction_id,
             entries: Vec::new(),
+            status: TransactionStatus::Recorded,
+            schedule_id: None
         };
 
         if dr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
-                transaction_type:Side::Debit, amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                entry_type:Side::Debit, amount,balance:None })
         }
 
         if cr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
-                transaction_type:Side::Credit,amount,status:TransactionStatus::Recorded,balance:None,schedule_id: None })
+                entry_type:Side::Credit,amount,balance:None })
         }
         t1
     }
@@ -575,14 +671,14 @@ mod tests {
                         amount,
                         description: description.to_string(),
                         account_id: id1,
-                        transaction_type: Side::Debit,
+                        entry_type: Side::Debit,
                         schedule_id: s_id_1,
                     },
                     ScheduleEntry {
                         amount,
                         description: description.to_string(),
                         account_id: id2,
-                        transaction_type: Side::Credit,
+                        entry_type: Side::Credit,
                         schedule_id: s_id_1,
                     }
                 ]

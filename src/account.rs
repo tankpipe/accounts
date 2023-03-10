@@ -30,15 +30,16 @@ impl Side {
 
 #[derive(Copy, Clone, PartialEq, Debug,Serialize, Deserialize)]
 pub enum TransactionStatus {
-    Recorded,
-    Predicted,
-    Reconsiled
+    Projected,
+    Recorded
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Transaction {
     pub id: Uuid,
     pub entries: Vec<Entry>,
+    pub status: TransactionStatus,
+    pub schedule_id: Option<Uuid>
 }
 
 impl Transaction {
@@ -49,10 +50,28 @@ impl Transaction {
                 .collect::<Vec<Entry>>()
     }
 
+
+    pub fn update_balance(&mut self, prev_balance: Decimal, account: &Account) -> Decimal {
+        let mut balance = prev_balance.clone();
+        for i in 0..self.entries.len() {
+            if self.entries[i].account_id == account.id {
+                balance = self.entries[i].update_balance(prev_balance, account);
+            }
+        }
+        balance
+    }
+
     pub fn involves_account(&self, account_id: &Uuid) -> bool {
         self.entries.iter()
                 .any(|e| e.account_id == *account_id)
     }
+
+    pub fn find_entry_by_account(&self, account_id: &Uuid) -> Option<&Entry> {
+        self.entries
+            .iter()
+            .find(|e| e.account_id == *account_id)
+    }
+
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -64,16 +83,26 @@ pub struct Entry {
     pub date: NaiveDate,
     pub description: String,
     pub account_id: Uuid,
-    pub transaction_type: Side,
+    pub entry_type: Side,
     pub amount: Decimal,
-    pub status: TransactionStatus,
     pub balance: Option<Decimal>,
-    pub schedule_id: Option<Uuid>
 }
 
 impl Entry {
     pub fn set_balance(&mut self, balance: Option<Decimal>) {
         self.balance = balance;
+    }
+
+    pub fn update_balance(&mut self, prev_balance: Decimal, account: &Account) -> Decimal {
+        assert_eq!(self.account_id, account.id, "Attempt made to update entry balance using incorrect account");
+        let mut balance = prev_balance.clone();
+        if self.entry_type == account.normal_balance() {
+            balance = balance + self.amount;
+        } else {
+            balance = balance - self.amount;
+        };
+        self.set_balance(Some(balance.clone()));
+        balance
     }
 }
 pub struct Transaction2 {
@@ -149,7 +178,7 @@ pub struct ScheduleEntry {
     pub schedule_id: Uuid,
     pub description: String,
     pub account_id: Uuid,
-    pub transaction_type: Side,
+    pub entry_type: Side,
     pub amount: Decimal,
 }
 
@@ -192,6 +221,8 @@ impl Schedule {
             let transaction = Transaction{
                 id: transaction_id,
                 entries: entries,
+                status: TransactionStatus::Projected,
+                schedule_id: Some(self.id)
             };
 
             self.last_date = Some(next_date);
@@ -208,11 +239,9 @@ impl Schedule {
             description: entry.description.clone(),
             amount: entry.amount.clone(),
             account_id: entry.account_id,
-            transaction_type: entry.transaction_type,
+            entry_type: entry.entry_type,
             date:        next_date.clone(),
-            status:      TransactionStatus::Predicted,
             balance:     None,
-            schedule_id: Some(self.id),
         }
     }
 
@@ -249,6 +278,7 @@ impl Schedule {
 mod tests {
 
     use chrono::{NaiveDate};
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
@@ -256,10 +286,69 @@ mod tests {
     use crate::account::Schedule;
     use crate::account::TransactionStatus;
 
+    use super::Account;
+    use super::Entry;
     use super::ScheduleEntry;
     use super::Side;
+    use super::Transaction;
 
+    #[test]
+    fn test_update_entry_balance() {
+        let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
+        let transaction_id = Uuid::new_v4();
+        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let mut entry = build_entry(transaction_id, date, "loan payment", account1.id,Side::Credit, dec!(100));
 
+        assert_eq!(dec!(300), entry.update_balance(dec!(400), &account1));
+        assert_eq!(dec!(300), entry.balance.unwrap());
+
+        assert_eq!(dec!(200), entry.update_balance(dec!(300), &account1));
+        assert_eq!(dec!(200), entry.balance.unwrap());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_entry_balance_using_incorrect_account() {
+        let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
+        let account2 = Account::create_new("Savings Account 2", super::AccountType::Asset);
+        let transaction_id = Uuid::new_v4();
+        let mut entry = build_entry(transaction_id, NaiveDate::from_ymd(2023, 2, 14), "loan payment", account1.id,Side::Credit, dec!(100));
+        entry.update_balance(dec!(400), &account2); // Should panic
+    }
+
+    #[test]
+    fn test_update_transaction_balance() {
+        let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
+        let account2 = Account::create_new("Loan 1", super::AccountType::Liability);
+        let transaction_id = Uuid::new_v4();
+        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let mut t = Transaction{ id: transaction_id, entries: [].to_vec(), status: TransactionStatus::Recorded, schedule_id: None};
+        t.entries.push(build_entry(transaction_id, date, "loan payment", account1.id,Side::Credit, dec!(100)));
+        t.entries.push(build_entry(transaction_id, date, "loan payment", account2.id, Side::Debit, dec!(100)));
+
+        assert_eq!(dec!(300), t.update_balance(dec!(400), &account1));
+        assert_eq!(dec!(400), t.update_balance(dec!(500), &account2));
+        assert_eq!(dec!(300), t.entries.iter().find(|e| e.account_id == account1.id).unwrap().balance.unwrap());
+        assert_eq!(dec!(400), t.entries.iter().find(|e| e.account_id == account2.id).unwrap().balance.unwrap());
+
+        assert_eq!(dec!(200), t.update_balance(dec!(300), &account1));
+        assert_eq!(dec!(300), t.update_balance(dec!(400), &account2));
+        assert_eq!(dec!(200), t.entries.iter().find(|e| e.account_id == account1.id).unwrap().balance.unwrap());
+        assert_eq!(dec!(300), t.entries.iter().find(|e| e.account_id == account2.id).unwrap().balance.unwrap());
+    }
+
+    fn build_entry(transaction_id: Uuid, date: NaiveDate, description: &str, account_id: Uuid, entry_type:Side,amount:Decimal) -> Entry {
+        Entry{
+            id: Uuid::new_v4(),
+            transaction_id: transaction_id,
+            date: date,
+            description: description.to_string(),
+            account_id: account_id,
+            entry_type,
+            amount: amount,
+            balance: None
+        }
+    }
     #[test]
     fn test_daily() {
         test_get_next(ScheduleEnum::Days, 3, NaiveDate::from_ymd(2022, 3, 14))
@@ -312,7 +401,7 @@ mod tests {
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
         assert_eq!(s.entries[0].description, next.entries[0].description);
         assert_eq!(s.entries[0].amount, next.entries[0].amount);
-        assert_eq!(TransactionStatus::Predicted, next.entries[0].status);
+        assert_eq!(TransactionStatus::Projected, next.status);
         next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
@@ -343,7 +432,7 @@ mod tests {
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
         let next = s.schedule_next(max_date).unwrap();
         assert_eq!(s.start_date, next.entries[0].date);
-        assert_eq!(s.id, next.entries[0].schedule_id.unwrap());
+        assert_eq!(s.id, next.schedule_id.unwrap());
     }
 
     fn build_schedule(frequency: i64, period: ScheduleEnum) -> Schedule {
@@ -365,14 +454,14 @@ mod tests {
             amount: dec!(100.99),
             description: "stes1".to_string(),
             account_id: Uuid::new_v4(),
-            transaction_type: Side::Debit,
+            entry_type: Side::Debit,
             schedule_id: s.id,
         });
         s.entries.push( ScheduleEntry {
             amount: dec!(100.99),
             description: "stes1".to_string(),
             account_id: Uuid::new_v4(),
-            transaction_type: Side::Credit,
+            entry_type: Side::Credit,
             schedule_id: s.id,
         });
         return s
