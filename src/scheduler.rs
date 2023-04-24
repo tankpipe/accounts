@@ -40,7 +40,6 @@ impl Scheduler {
     }
 
     pub fn end_date(&self) -> Option<NaiveDate> {
-        println!("{:?}", self.end_date);
         self.end_date.and_then(|d| Some(d.clone()))
     }
 
