@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::{account::{Account, Schedule, Transaction, Entry}, scheduler::{Scheduler}};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq  )]
 pub struct Settings {
     pub require_double_entry: bool,
@@ -15,6 +17,7 @@ pub struct Settings {
 pub struct Books {
     pub id: Uuid,
     pub name: String,
+    pub version: String,
     accounts: HashMap<Uuid, Account>,
     scheduler: Scheduler,
     transactions: Vec<Transaction>,
@@ -33,6 +36,7 @@ impl Books {
         Books{
             id: Uuid::new_v4(),
             name: name.to_string(),
+            version: VERSION.to_string(),
             accounts: HashMap::new(),
             scheduler: Scheduler::build_empty(), transactions: Vec::new(),
             settings: Settings{ require_double_entry: false },
