@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
+use uuid::Uuid;
 use crate::serializer::*;
 
 use crate::{account::{Schedule, Transaction}, books::BooksError};
@@ -33,6 +34,15 @@ impl Scheduler {
             Err(BooksError { error: "Schedule not found".to_string() })
         }
 
+    }
+
+    pub fn delete_schedule(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        if let Some(index) = self.schedules.iter().position(|s| s.id == *id) {
+            self.schedules.remove(index);
+            Ok(())
+        } else {
+            Err(BooksError { error: "Schedule not found".to_string() })
+        }
     }
 
     pub fn schedules(&self) -> &[Schedule] {

@@ -244,6 +244,20 @@ impl Books {
         self.scheduler.update_schedule(schedule)
     }
 
+    pub fn delete_schedule(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        // Check if schedule exists
+        if !self.scheduler.schedules().iter().any(|s| s.id == *id) {
+            return Err(BooksError::from_str(format!("Schedule {} not found.", id).as_str()));
+        }
+
+        // Check if any transactions reference this schedule
+        if self.transactions.iter().any(|t| t.schedule_id == Some(*id)) {
+            return Err(BooksError::from_str(format!("Schedule {} can not be deleted as it has transactions.", id).as_str()));
+        }
+
+        self.scheduler.delete_schedule(id)
+    }
+
     pub fn schedules(&self) -> &[Schedule] {
         self.scheduler.schedules()
     }
@@ -576,6 +590,57 @@ mod tests {
         let _result = books.update_schedule(st1_copy);
         assert_eq!(1, (books.schedules()).len());
         assert_eq!("test changed", books.schedules()[0].entries[0].description);
+    }
+
+    #[test]
+    fn test_delete_schedule() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1_id = st1.id;
+        books.add_schedule(st1).unwrap();
+        assert_eq!(1, books.schedules().len());
+
+        let result = books.delete_schedule(&st1_id);
+        assert!(result.is_ok());
+        assert_eq!(0, books.schedules().len());
+    }
+
+    #[test]
+    fn test_cannot_delete_schedule_with_transactions() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1_id = st1.id;
+        books.add_schedule(st1).unwrap();
+
+        // Generate transactions from the schedule
+        books.generate(NaiveDate::from_ymd(2023, 6, 4));
+        
+        // Verify transactions were created with schedule_id
+        assert!(books.transactions().len() > 0);
+        assert!(books.transactions().iter().any(|t| t.schedule_id == Some(st1_id)));
+
+        // Try to delete the schedule - should fail
+        let result = books.delete_schedule(&st1_id);
+        assert_eq!(
+            format!("Schedule {} can not be deleted as it has transactions.", st1_id).as_str(),
+            result.err().unwrap().error
+        );
+        assert_eq!(1, books.schedules().len());
+    }
+
+    #[test]
+    fn test_cannot_delete_schedule_with_invalid_id() {
+        let (mut books, id1, id2) = setup_books();
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        books.add_schedule(st1).unwrap();
+        
+        let invalid_id = Uuid::new_v4();
+        let result = books.delete_schedule(&invalid_id);
+        assert_eq!(
+            format!("Schedule {} not found.", invalid_id).as_str(),
+            result.err().unwrap().error
+        );
+        assert_eq!(1, books.schedules().len());
     }
 
 
