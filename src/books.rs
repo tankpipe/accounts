@@ -3,7 +3,7 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Schedule, Transaction, Entry}, scheduler::{Scheduler}};
+use crate::{account::{Account, Schedule, Transaction, Entry, TransactionStatus}, scheduler::{Scheduler}};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -264,6 +264,20 @@ impl Books {
 
     pub fn end_date(&self) -> Option<NaiveDate> {
         self.scheduler.end_date()
+    }
+
+    pub fn transactions_by_schedule(&self, schedule_id: Uuid, status: Option<TransactionStatus>) -> Vec<Transaction> {
+        self.transactions
+            .iter()
+            .filter(|t| t.schedule_id == Some(schedule_id))
+            .filter(|t| {
+                match status {
+                    Some(filter_status) => t.status == filter_status,
+                    None => true,
+                }
+            })
+            .map(|t| t.clone())
+            .collect()
     }
 
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
