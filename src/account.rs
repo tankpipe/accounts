@@ -270,6 +270,10 @@ impl Schedule {
         }
     }
 
+    pub fn set_last_date(&mut self, last_date: NaiveDate) {
+        self.last_date = Some(last_date);
+    }
+
 }
 
 

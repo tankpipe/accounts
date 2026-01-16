@@ -29,6 +29,13 @@ impl Books {
         self.transactions.append(&mut self.scheduler.generate(end_date));
         self.transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
     }
+
+    pub fn generate_by_schedule(&mut self, end_date: NaiveDate, schedule_id: Uuid) -> Vec<Transaction> {
+        let transactions = self.scheduler.generate_by_schedule(end_date, schedule_id);
+        self.transactions.append(&mut transactions.clone());
+        self.transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
+        transactions
+    }
 }
 
 impl Books {

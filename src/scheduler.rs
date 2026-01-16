@@ -53,11 +53,10 @@ impl Scheduler {
         self.end_date.and_then(|d| Some(d.clone()))
     }
 
-    pub fn generate(&mut self, end_date: NaiveDate) -> Vec<Transaction> {
+    fn generate_transactions_for_schedules(schedules: &mut [Schedule], end_date: NaiveDate) -> Vec<Transaction> {
         let mut transactions : Vec<Transaction> = Vec::new();
-        self.end_date = Some(end_date);
 
-        for schedule in &mut self.schedules {
+        for schedule in schedules.iter_mut() {
             let mut next = schedule.schedule_next(end_date);
             while next.is_some() {
                 transactions.push(next.unwrap());
@@ -68,7 +67,25 @@ impl Scheduler {
         print!("{:?}", transactions);
         transactions
     }
+
+    pub fn generate(&mut self, end_date: NaiveDate) -> Vec<Transaction> {
+        self.end_date = Some(end_date);
+        Self::generate_transactions_for_schedules(&mut self.schedules, end_date)
+    }
+
+    /// Generate transactions for a specific schedule. Does not update the scheduler (overall) end_date.
+    pub fn generate_by_schedule(&mut self, end_date: NaiveDate, schedule_id: Uuid) -> Vec<Transaction> {
+        let mut transactions : Vec<Transaction> = Vec::new();
+
+        if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
+            let schedule_slice = &mut self.schedules[index..=index];
+            transactions = Self::generate_transactions_for_schedules(schedule_slice, end_date);
+        }
+        transactions
+    }
+        
 }
+
 
 
 
