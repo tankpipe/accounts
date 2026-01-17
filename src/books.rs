@@ -36,9 +36,7 @@ impl Books {
         self.transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
         transactions
     }
-}
 
-impl Books {
     pub fn build_empty(name: &str) -> Books {
         Books{
             id: Uuid::new_v4(),
@@ -269,6 +267,10 @@ impl Books {
         self.scheduler.schedules()
     }
 
+    pub fn get_schedule(&self, schedule_id: Uuid) -> Result<Schedule, BooksError> {
+        self.scheduler.get_schedule(schedule_id).map(|s| s.clone())
+    }
+
     pub fn end_date(&self) -> Option<NaiveDate> {
         self.scheduler.end_date()
     }
@@ -285,6 +287,26 @@ impl Books {
             })
             .map(|t| t.clone())
             .collect()
+    }
+
+    pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Option<NaiveDate> {
+        let mut transactions: Vec<Transaction> = self.transactions
+            .iter()
+            .filter(|t| t.schedule_id == Some(schedule_id))
+            .map(|t| t.clone())
+            .collect();
+        
+        // Sort transactions by date to find the latest one
+        transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
+        
+        let new_last = transactions.last().map(|t| t.entries[0].date);
+        println!("New last date: {:?}", new_last);
+        self.scheduler.update_schedule(Schedule {
+            id: schedule_id,
+            last_date: new_last,
+            ..self.scheduler.get_schedule(schedule_id).unwrap().clone()
+        }).unwrap();
+        new_last
     }
 
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
@@ -773,6 +795,146 @@ mod tests {
                     }
                 ]
         }
+    }
+
+    #[test]
+    fn test_reset_schedule_last_date_with_transactions() {
+        let (mut books, id1, id2) = setup_books();
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule_id = schedule.id;
+        
+        // Add the schedule
+        books.add_schedule(schedule).unwrap();
+        
+        // Create some transactions for this schedule
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let mut t1_with_schedule = t1;
+        t1_with_schedule.schedule_id = Some(schedule_id);
+        
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 7, 4));
+        let mut t2_with_schedule = t2;
+        t2_with_schedule.schedule_id = Some(schedule_id);
+        
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 8, 4));
+        let mut t3_with_schedule = t3;
+        t3_with_schedule.schedule_id = Some(schedule_id);
+        
+        // Add transactions out of order to test that sorting finds the latest date
+        books.add_transaction(t3_with_schedule).unwrap(); // August 4
+        books.add_transaction(t1_with_schedule).unwrap(); // June 4
+        books.add_transaction(t2_with_schedule).unwrap(); // July 4
+        
+        // Reset the schedule last date
+        let result = books.reset_schedule_last_date(schedule_id);
+        
+        // Should return the date of the latest transaction (August 4, 2022)
+        // Now that transactions are sorted by date, it should find August 4th regardless of addition order
+        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 8, 4)));
+        
+        // Verify the schedule was updated
+        let updated_schedule = books.get_schedule(schedule_id).unwrap();
+        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd(2022, 8, 4)));
+    }
+
+    #[test]
+    fn test_reset_schedule_last_date_no_transactions() {
+        let (mut books, id1, id2) = setup_books();
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule_id = schedule.id;
+        
+        // Add the schedule but no transactions
+        books.add_schedule(schedule).unwrap();
+        
+        // Reset the schedule last date
+        let result = books.reset_schedule_last_date(schedule_id);
+        
+        // Should return None since there are no transactions
+        assert_eq!(result, None);
+        
+        // Verify the schedule was updated with None
+        let updated_schedule = books.get_schedule(schedule_id).unwrap();
+        assert_eq!(updated_schedule.last_date, None);
+    }
+
+    #[test]
+    fn test_reset_schedule_last_date_transactions_for_other_schedules() {
+        let (mut books, id1, id2) = setup_books();
+        let schedule1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule1_id = schedule1.id;
+        
+        let schedule2 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule2_id = schedule2.id;
+        
+        // Add both schedules
+        books.add_schedule(schedule1).unwrap();
+        books.add_schedule(schedule2).unwrap();
+        
+        // Create transactions for schedule1
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let mut t1_with_schedule = t1;
+        t1_with_schedule.schedule_id = Some(schedule1_id);
+        
+        // Create transactions for schedule2 (later date)
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 8, 4));
+        let mut t2_with_schedule = t2;
+        t2_with_schedule.schedule_id = Some(schedule2_id);
+        
+        // Add transactions
+        books.add_transaction(t1_with_schedule).unwrap();
+        books.add_transaction(t2_with_schedule).unwrap();
+        
+        // Reset schedule1's last date
+        let result = books.reset_schedule_last_date(schedule1_id);
+        
+        // Should return the date of schedule1's last transaction (June 4, 2022)
+        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        
+        // Verify schedule1 was updated correctly
+        let updated_schedule1 = books.get_schedule(schedule1_id).unwrap();
+        assert_eq!(updated_schedule1.last_date, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        
+        // Verify schedule2 was not affected
+        let updated_schedule2 = books.get_schedule(schedule2_id).unwrap();
+        assert_eq!(updated_schedule2.last_date, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Schedule not found")]
+    fn test_reset_schedule_last_date_nonexistent_schedule() {
+        let (mut books, _id1, _id2) = setup_books();
+        let fake_schedule_id = Uuid::new_v4();
+        
+        // Try to reset last date for a schedule that doesn't exist - should panic
+        books.reset_schedule_last_date(fake_schedule_id);
+    }
+
+    #[test]
+    fn test_reset_schedule_last_date_with_existing_last_date() {
+        let (mut books, id1, id2) = setup_books();
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule_id = schedule.id;
+        
+        // Add the schedule with an existing last_date
+        let mut schedule_with_last_date = schedule;
+        schedule_with_last_date.last_date = Some(NaiveDate::from_ymd(2022, 5, 4));
+        books.add_schedule(schedule_with_last_date).unwrap();
+        
+        // Create a transaction after the existing last_date
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let mut t1_with_schedule = t1;
+        t1_with_schedule.schedule_id = Some(schedule_id);
+        
+        books.add_transaction(t1_with_schedule).unwrap();
+        
+        // Reset the schedule last date
+        let result = books.reset_schedule_last_date(schedule_id);
+        
+        // Should return the date of the last transaction (June 4, 2022), overwriting the old date
+        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        
+        // Verify the schedule was updated with the new date
+        let updated_schedule = books.get_schedule(schedule_id).unwrap();
+        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd(2022, 6, 4)));
     }
 
 }

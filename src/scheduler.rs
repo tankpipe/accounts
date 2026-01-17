@@ -25,6 +25,16 @@ impl Scheduler {
         self.schedules.push(schedule);
     }
 
+    pub fn get_schedule(&self, schedule_id: Uuid) -> Result<&Schedule, BooksError> {
+
+        if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
+            Ok(&self.schedules[index])
+        } else {
+            Err(BooksError { error: "Schedule not found".to_string() })
+        }
+
+    }
+
     pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
 
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule.id) {
