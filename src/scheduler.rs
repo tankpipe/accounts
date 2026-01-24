@@ -141,7 +141,8 @@ mod tests {
                         entry_type: Side::Credit,
                         schedule_id: s_id_1,
                     }
-                ]
+                ],
+                modifier: None
             });
 
         let s_id_2 = Uuid::new_v4();
@@ -169,7 +170,8 @@ mod tests {
                         entry_type: Side::Credit,
                         schedule_id: s_id_2,
                     }
-                ]
+                ],
+                modifier: None
             });
 
         let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));

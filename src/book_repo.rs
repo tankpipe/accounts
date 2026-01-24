@@ -58,7 +58,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType, ScheduleEntry}, book_repo::save_books};
+    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType, ScheduleEntry, Modifier}, book_repo::save_books};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -100,7 +100,8 @@ mod tests {
                     entry_type: Side::Credit,
                     schedule_id: s_id_1,
                 }
-            ]
+            ],
+            modifier: None
         };
         let _ = books.add_schedule(st);
         books

@@ -3,7 +3,7 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Schedule, Transaction, Entry, TransactionStatus}, scheduler::{Scheduler}};
+use crate::{account::{Account, Schedule, Transaction, Entry, TransactionStatus, Modifier}, scheduler::{Scheduler}};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -793,7 +793,8 @@ mod tests {
                         entry_type: Side::Credit,
                         schedule_id: s_id_1,
                     }
-                ]
+                ],
+            modifier: None
         }
     }
 
