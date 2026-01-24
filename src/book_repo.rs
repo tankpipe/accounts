@@ -58,7 +58,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType, ScheduleEntry, Modifier}, book_repo::save_books};
+    use crate::{account::{Account, Transaction, Side, TransactionStatus, Entry, AccountType}, schedule::{Schedule, ScheduleEnum, ScheduleEntry}, book_repo::save_books};
     use super::{Books, load_books};
 
    fn build_books() -> Books {

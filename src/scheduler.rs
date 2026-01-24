@@ -1,9 +1,10 @@
 use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
+use crate::schedule::Schedule;
 use crate::serializer::*;
 
-use crate::{account::{Schedule, Transaction}, books::BooksError};
+use crate::{account::{Transaction}, books::BooksError};
 
 ///
 
@@ -105,7 +106,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::*, scheduler::Scheduler};
+    use crate::{account::*, schedule::{Schedule, ScheduleEnum, ScheduleEntry}, scheduler::Scheduler};  
 
 
     #[test]

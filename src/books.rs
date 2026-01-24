@@ -3,7 +3,8 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Schedule, Transaction, Entry, TransactionStatus, Modifier}, scheduler::{Scheduler}};
+use crate::{account::{Account, Transaction, Entry, TransactionStatus}, scheduler::{Scheduler}};
+use crate::schedule::{Schedule, Modifier};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -336,6 +337,7 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::{account::*, books::BooksError};
+    use crate::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
 
     use super::Books;
 

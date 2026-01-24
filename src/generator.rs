@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use chrono::{NaiveDate};
-use crate::account::{Schedule, Transaction};
+use crate::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
+use crate::account::Transaction;
 
 pub struct Generator {
     pub scheduled_transations: Vec<Schedule>
@@ -30,7 +31,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
-    use crate::account::{ScheduleEnum, Schedule};
+    use crate::schedule::{ScheduleEnum, Schedule};
     use crate::generator::Generator;
 
     #[test]
