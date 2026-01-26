@@ -67,7 +67,7 @@ impl Schedule {
             let entries = self
                 .entries
                 .iter()
-                .map(|e| self.build_entry(transaction_id, next_date, e))
+                .map(|e| build_entry(transaction_id, next_date, e, self.modifier.as_ref()))
                 .collect();
 
             let transaction = Transaction {
@@ -84,75 +84,13 @@ impl Schedule {
         return None;
     }
 
-    fn build_entry(
-        &self,
-        transaction_id: Uuid,
-        next_date: NaiveDate,
-        entry: &ScheduleEntry,
-    ) -> Entry {
-        let mut entry = Entry {
-            id: Uuid::new_v4(),
-            transaction_id: transaction_id,
-            description: entry.description.clone(),
-            amount: entry.amount.clone(),
-            account_id: entry.account_id,
-            entry_type: entry.entry_type,
-            date: next_date.clone(),
-            balance: None,
-        };
-        if self.modifier.is_some() {
-            entry.amount = self.modifier.as_ref().unwrap().apply(entry.amount);
-        }
-        entry
-    }
-
     pub fn get_next_date(&self) -> NaiveDate {
         match self.last_date {
             Some(d) => {
-                Schedule::calculate_next_date(d, self.period, self.frequency, self.start_date)
+                calculate_next_date(d, self.period, self.frequency, self.start_date)
             }
             None => self.start_date,
         }
-    }
-
-    fn calculate_next_date(
-        prev_date: NaiveDate,
-        period: ScheduleEnum,
-        frequency: i64,
-        start_date: NaiveDate,
-    ) -> NaiveDate {
-        let mut new_date: NaiveDate;
-        match period {
-            ScheduleEnum::Days => {
-                new_date = prev_date
-                    .checked_add_signed(Duration::days(frequency))
-                    .unwrap()
-            }
-            ScheduleEnum::Weeks => {
-                new_date = prev_date
-                    .checked_add_signed(Duration::days(frequency * 7))
-                    .unwrap()
-            }
-            ScheduleEnum::Months => {
-                new_date = shift_months(prev_date, frequency.try_into().unwrap())
-            }
-            ScheduleEnum::Years => new_date = shift_years(prev_date, frequency.try_into().unwrap()),
-        }
-        println!(
-            "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
-            prev_date, new_date, start_date
-        );
-        if (period == ScheduleEnum::Months || period == ScheduleEnum::Years)
-            && new_date.day() < start_date.day()
-        {
-            let new_month = new_date.month();
-            let mut result = new_date.checked_add_signed(Duration::days(1));
-            while result.is_some() && result.unwrap().month() == new_month {
-                new_date = result.unwrap();
-                result = new_date.checked_add_signed(Duration::days(1));
-            }
-        }
-        new_date
     }
 
     pub fn set_last_date(&mut self, last_date: NaiveDate) {
@@ -161,14 +99,54 @@ impl Schedule {
 }
 
 
-#[cfg(test)]
-pub(crate) fn __calculate_next_date_test(
+pub fn calculate_next_date(
     prev_date: NaiveDate,
     period: ScheduleEnum,
     frequency: i64,
     start_date: NaiveDate,
 ) -> NaiveDate {
-    Schedule::calculate_next_date(prev_date, period, frequency, start_date)
+    let mut new_date: NaiveDate;
+    match period {
+        ScheduleEnum::Days => new_date = prev_date.checked_add_signed(Duration::days(frequency)).unwrap(),            
+        ScheduleEnum::Weeks => new_date = prev_date.checked_add_signed(Duration::days(frequency * 7)).unwrap(),
+        ScheduleEnum::Months => new_date = shift_months(prev_date, frequency.try_into().unwrap()),
+        ScheduleEnum::Years => new_date = shift_years(prev_date, frequency.try_into().unwrap()),
+    }
+    println!(
+        "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
+        prev_date, new_date, start_date
+    );
+    if (period == ScheduleEnum::Months || period == ScheduleEnum::Years) && new_date.day() < start_date.day() {
+        let new_month = new_date.month();
+        let mut result = new_date.checked_add_signed(Duration::days(1));
+        while result.is_some() && result.unwrap().month() == new_month {
+            new_date = result.unwrap();
+            result = new_date.checked_add_signed(Duration::days(1));
+        }
+    }
+    new_date
+}
+
+fn build_entry(
+    transaction_id: Uuid,
+    next_date: NaiveDate,
+    entry: &ScheduleEntry,
+    modifier: Option<&Modifier>,
+) -> Entry {
+    let mut entry = Entry {
+        id: Uuid::new_v4(),
+        transaction_id: transaction_id,
+        description: entry.description.clone(),
+        amount: entry.amount.clone(),
+        account_id: entry.account_id,
+        entry_type: entry.entry_type,
+        date: next_date.clone(),
+        balance: None,
+    };
+    if modifier.is_some() {
+        entry.amount = modifier.as_ref().unwrap().apply(entry.amount);
+    }
+    entry
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -207,7 +185,7 @@ impl Modifier {
 
     pub fn get_next_date(&self) -> NaiveDate {
         let start_date = self.next_date.unwrap_or(self.start_date);
-        Schedule::calculate_next_date(
+        calculate_next_date(
             start_date,
             self.period,
             self.frequency,
@@ -224,7 +202,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
-    use super::{Schedule, ScheduleEnum, ScheduleEntry, Modifier};
+    use super::{Schedule, ScheduleEnum, ScheduleEntry, Modifier, calculate_next_date};
     use crate::account::TransactionStatus;
 
     use crate::account::{Entry, Side};
@@ -434,7 +412,7 @@ mod tests {
     fn test_calculate_next_date_days() {
         let prev = NaiveDate::from_ymd(2022, 3, 10);
         let start = NaiveDate::from_ymd(2022, 3, 1);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Days, 5, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Days, 5, start);
         assert_eq!(NaiveDate::from_ymd(2022, 3, 15), next);
     }
 
@@ -442,7 +420,7 @@ mod tests {
     fn test_calculate_next_date_weeks() {
         let prev = NaiveDate::from_ymd(2022, 3, 10);
         let start = NaiveDate::from_ymd(2022, 3, 1);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Weeks, 2, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Weeks, 2, start);
         assert_eq!(NaiveDate::from_ymd(2022, 3, 24), next);
     }
 
@@ -450,7 +428,7 @@ mod tests {
     fn test_calculate_next_date_months_regular_day() {
         let prev = NaiveDate::from_ymd(2022, 1, 15);
         let start = NaiveDate::from_ymd(2022, 1, 15);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Months, 1, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
         assert_eq!(NaiveDate::from_ymd(2022, 2, 15), next);
     }
 
@@ -459,7 +437,7 @@ mod tests {
         let prev = NaiveDate::from_ymd(2022, 1, 31);
         let start = NaiveDate::from_ymd(2022, 1, 31);
         // Jan 31 + 1 month => Feb 28 (non-leap year)
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Months, 1, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
         assert_eq!(NaiveDate::from_ymd(2022, 2, 28), next);
     }
 
@@ -468,7 +446,7 @@ mod tests {
         // From Feb 28 with start day 31, monthly should roll to Mar 31
         let prev = NaiveDate::from_ymd(2023, 2, 28);
         let start = NaiveDate::from_ymd(2023, 1, 31);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Months, 1, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
         assert_eq!(NaiveDate::from_ymd(2023, 3, 31), next);
     }
 
@@ -476,7 +454,7 @@ mod tests {
     fn test_calculate_next_date_years_regular() {
         let prev = NaiveDate::from_ymd(2020, 6, 15);
         let start = NaiveDate::from_ymd(2020, 6, 15);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Years, 1, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Years, 1, start);
         assert_eq!(NaiveDate::from_ymd(2021, 6, 15), next);
     }
 
@@ -485,7 +463,7 @@ mod tests {
         // Leap day + 1 year => Feb 28 of non-leap year
         let prev = NaiveDate::from_ymd(2020, 2, 29);
         let start = NaiveDate::from_ymd(2020, 2, 29);
-        let next = super::__calculate_next_date_test(prev, ScheduleEnum::Years, 1, start);
+        let next = calculate_next_date(prev, ScheduleEnum::Years, 1, start);
         assert_eq!(NaiveDate::from_ymd(2021, 2, 28), next);
     }
 
