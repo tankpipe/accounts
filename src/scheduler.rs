@@ -94,7 +94,7 @@ impl Scheduler {
         }
         transactions
     }
-        
+
 }
 
 
@@ -106,7 +106,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::*, schedule::{Schedule, ScheduleEnum, ScheduleEntry}, scheduler::Scheduler};  
+    use crate::{account::*, schedule::{Schedule, ScheduleEnum, ScheduleEntry}, scheduler::Scheduler};
 
 
     #[test]
@@ -143,7 +143,7 @@ mod tests {
                         schedule_id: s_id_1,
                     }
                 ],
-                modifier: None
+                schedule_modifier: None
             });
 
         let s_id_2 = Uuid::new_v4();
@@ -172,7 +172,7 @@ mod tests {
                         schedule_id: s_id_2,
                     }
                 ],
-                modifier: None
+                schedule_modifier: None
             });
 
         let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));

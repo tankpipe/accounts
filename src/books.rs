@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 use crate::{account::{Account, Transaction, Entry, TransactionStatus}, scheduler::{Scheduler}};
-use crate::schedule::{Schedule, Modifier};
+use crate::schedule::{Schedule};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -796,7 +796,7 @@ mod tests {
                         schedule_id: s_id_1,
                     }
                 ],
-            modifier: None
+            schedule_modifier: None
         }
     }
 

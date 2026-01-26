@@ -101,7 +101,7 @@ mod tests {
                     schedule_id: s_id_1,
                 }
             ],
-            modifier: None
+            schedule_modifier: None
         };
         let _ = books.add_schedule(st);
         books
