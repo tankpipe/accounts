@@ -3,8 +3,8 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Transaction, Entry, TransactionStatus}, scheduler::{Scheduler}};
-use crate::schedule::{Schedule};
+use crate::{account::{Account, Entry, Transaction, TransactionStatus}, books_prev_versions::BooksV004, scheduler::Scheduler};
+use crate::schedule::{Schedule, Modifier};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -290,6 +290,46 @@ impl Books {
             .collect()
     }
 
+    pub fn add_modifier(&mut self, modifier: Modifier) -> Result<(), BooksError> {
+        if let Some(value) = self.validate_modifier(&modifier) {
+            return value;
+        }
+
+        self.scheduler.add_modifier(modifier);
+        Ok(())
+    }
+
+    fn validate_modifier(&mut self, _modifier: &Modifier) -> Option<Result<(), BooksError>> {
+        // Add validation logic for modifiers if needed
+        // For now, no validation required
+        None
+    }
+
+    pub fn update_modifier(&mut self, modifier: Modifier) -> Result<(), BooksError> {
+        if let Some(value) = self.validate_modifier(&modifier) {
+            return value;
+        }
+
+        self.scheduler.update_modifier(modifier)
+    }
+
+    pub fn delete_modifier(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        // Check if modifier exists
+        if !self.scheduler.modifiers().iter().any(|m| m.id == *id) {
+            return Err(BooksError::from_str(format!("Modifier {} not found.", id).as_str()));
+        }
+
+        self.scheduler.delete_modifier(id)
+    }
+
+    pub fn modifiers(&self) -> &[Modifier] {
+        self.scheduler.modifiers()
+    }
+
+    pub fn get_modifier(&self, modifier_id: Uuid) -> Result<Modifier, BooksError> {
+        self.scheduler.get_modifier(modifier_id).map(|m| m.clone())
+    }
+
     pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Option<NaiveDate> {
         let mut transactions: Vec<Transaction> = self.transactions
             .iter()
@@ -317,6 +357,25 @@ impl Books {
         }
     }
 }
+
+impl From<BooksV004> for Books {
+    fn from(books_v004: BooksV004) -> Self {
+        Books {
+            id: books_v004.id,
+            name: books_v004.name,
+            version: books_v004.version,
+            accounts: books_v004.accounts,
+            scheduler: Scheduler::with_components(
+                books_v004.scheduler.schedules,
+                books_v004.scheduler.end_date,
+                vec![],
+            ),
+            transactions: books_v004.transactions,
+            settings: books_v004.settings,
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct BooksError {

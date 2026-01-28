@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
-use crate::schedule::Schedule;
+use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
 
 use crate::{account::{Transaction}, books::BooksError};
@@ -13,13 +13,18 @@ pub struct Scheduler {
     schedules: Vec<Schedule>,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
-    end_date: Option<NaiveDate>
+    end_date: Option<NaiveDate>,
+    modifiers: Vec<Modifier>,
 }
 
 impl Scheduler {
 
     pub fn build_empty() -> Scheduler {
-        Scheduler{schedules: Vec::new(), end_date: None}
+        Scheduler{schedules: Vec::new(), end_date: None, modifiers: Vec::new()}
+    }
+
+    pub fn with_components(schedules: Vec<Schedule>, end_date: Option<NaiveDate>, modifiers: Vec<Modifier>) -> Scheduler {
+        Scheduler { schedules, end_date, modifiers }
     }
 
     pub fn add_schedule(&mut self, schedule: Schedule) {
@@ -58,6 +63,40 @@ impl Scheduler {
 
     pub fn schedules(&self) -> &[Schedule] {
         self.schedules.as_slice()
+    }
+
+    pub fn add_modifier(&mut self, modifier: Modifier) {
+        self.modifiers.push(modifier);
+    }
+
+    pub fn get_modifier(&self, modifier_id: Uuid) -> Result<&Modifier, BooksError> {
+        if let Some(index) = self.modifiers.iter().position(|m| m.id == modifier_id) {
+            Ok(&self.modifiers[index])
+        } else {
+            Err(BooksError { error: "Modifier not found".to_string() })
+        }
+    }
+
+    pub fn update_modifier(&mut self, modifier: Modifier) -> Result<(), BooksError> {
+        if let Some(index) = self.modifiers.iter().position(|m| m.id == modifier.id) {
+            let _old = std::mem::replace(&mut self.modifiers[index], modifier);
+            Ok(())
+        } else {
+            Err(BooksError { error: "Modifier not found".to_string() })
+        }
+    }
+
+    pub fn delete_modifier(&mut self, id: &Uuid) -> Result<(), BooksError> {
+        if let Some(index) = self.modifiers.iter().position(|m| m.id == *id) {
+            self.modifiers.remove(index);
+            Ok(())
+        } else {
+            Err(BooksError { error: "Modifier not found".to_string() })
+        }
+    }
+
+    pub fn modifiers(&self) -> &[Modifier] {
+        self.modifiers.as_slice()
     }
 
     pub fn end_date(&self) -> Option<NaiveDate> {
@@ -113,7 +152,8 @@ mod tests {
     fn test_generate() {
         let mut scheduler  = Scheduler{
             schedules: Vec::new(),
-            end_date: None
+            end_date: None,
+            modifiers: Vec::new()
         };
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
