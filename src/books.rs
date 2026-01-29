@@ -363,7 +363,7 @@ impl From<BooksV004> for Books {
         Books {
             id: books_v004.id,
             name: books_v004.name,
-            version: books_v004.version,
+            version: VERSION.to_string(),
             accounts: books_v004.accounts,
             scheduler: Scheduler::with_components(
                 books_v004.scheduler.schedules,
