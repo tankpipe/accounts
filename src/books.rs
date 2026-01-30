@@ -49,6 +49,18 @@ impl Books {
         }
     }
 
+    pub fn with_components(id: Uuid, name: String, version: String, accounts: HashMap<Uuid, Account>, scheduler: Scheduler, transactions: Vec<Transaction>, settings: Settings) -> Books {
+        Books {
+            id,
+            name,
+            version,
+            accounts,
+            scheduler,
+            transactions,
+            settings,
+        }
+    }
+
     pub fn add_account(&mut self, account: Account) {
         self.accounts.insert (account.id, account);
     }
@@ -357,25 +369,6 @@ impl Books {
         }
     }
 }
-
-impl From<BooksV004> for Books {
-    fn from(books_v004: BooksV004) -> Self {
-        Books {
-            id: books_v004.id,
-            name: books_v004.name,
-            version: VERSION.to_string(),
-            accounts: books_v004.accounts,
-            scheduler: Scheduler::with_components(
-                books_v004.scheduler.schedules,
-                books_v004.scheduler.end_date,
-                vec![],
-            ),
-            transactions: books_v004.transactions,
-            settings: books_v004.settings,
-        }
-    }
-}
-
 
 #[derive(Debug)]
 pub struct BooksError {
@@ -855,7 +848,7 @@ mod tests {
                         schedule_id: s_id_1,
                     }
                 ],
-            schedule_modifier: None
+            schedule_modifiers: vec![],
         }
     }
 

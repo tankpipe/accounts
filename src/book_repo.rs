@@ -124,7 +124,7 @@ mod tests {
                     schedule_id: s_id_1,
                 }
             ],
-            schedule_modifier: None
+            schedule_modifiers: vec![]
         };
         let _ = books.add_schedule(st);
         let m = Modifier {

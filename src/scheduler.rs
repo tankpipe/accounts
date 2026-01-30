@@ -183,7 +183,7 @@ mod tests {
                         schedule_id: s_id_1,
                     }
                 ],
-                schedule_modifier: None
+                schedule_modifiers: vec![]
             });
 
         let s_id_2 = Uuid::new_v4();
@@ -212,7 +212,7 @@ mod tests {
                         schedule_id: s_id_2,
                     }
                 ],
-                schedule_modifier: None
+                schedule_modifiers: vec![]
             });
 
         let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));

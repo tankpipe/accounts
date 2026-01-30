@@ -46,20 +46,19 @@ pub struct Schedule {
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     pub last_date: Option<NaiveDate>,
     pub entries: Vec<ScheduleEntry>,
-    pub schedule_modifier: Option<ScheduleModifier>,
+    pub schedule_modifiers: Vec<ScheduleModifier>,
 }
 
 impl Schedule {
     pub fn schedule_next(&mut self, max_date: NaiveDate) -> Option<Transaction> {
         let next_date = self.get_next_date();        
 
-        if self.schedule_modifier.is_some() {
-            let next_modifier_date = self.schedule_modifier.as_ref().unwrap().get_next_date();
+        for modifier in &mut self.schedule_modifiers {
+            let next_modifier_date = modifier.get_next_date();
 
             if next_date >= next_modifier_date {
-                self.schedule_modifier.as_mut().unwrap().increment(next_modifier_date);
+                modifier.increment(next_modifier_date);
             }
-
         }
 
         if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
@@ -67,7 +66,7 @@ impl Schedule {
             let entries = self
                 .entries
                 .iter()
-                .map(|e| build_entry(transaction_id, next_date, e, self.schedule_modifier.as_ref()))
+                .map(|e| build_entry(transaction_id, next_date, e, &self.schedule_modifiers))
                 .collect();
 
             let transaction = Transaction {
@@ -129,7 +128,7 @@ fn build_entry(
     transaction_id: Uuid,
     next_date: NaiveDate,
     entry: &ScheduleEntry,
-    schedule_modifier: Option<&ScheduleModifier>,
+    schedule_modifiers: &[ScheduleModifier],
 ) -> Entry {
     let mut entry = Entry {
         id: Uuid::new_v4(),
@@ -141,9 +140,12 @@ fn build_entry(
         date: next_date.clone(),
         balance: None,
     };
-    if schedule_modifier.is_some() {
-        entry.amount = schedule_modifier.as_ref().unwrap().apply(entry.amount);
+    
+    // Apply all modifiers in sequence
+    for modifier in schedule_modifiers {
+        entry.amount = modifier.apply(entry.amount);
     }
+    
     entry
 }
 
@@ -252,7 +254,7 @@ mod tests {
             end_date: None,
             last_date: Some(NaiveDate::from_ymd(2023, 2, 28)),
             entries: Vec::new(),
-            schedule_modifier: None,
+            schedule_modifiers: Vec::new(),
         };
 
         let last_at_start = s.last_date;
@@ -268,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_multiple_monthly() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, None);
+        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let max_date = NaiveDate::from_ymd(2022, 11, 11);
         let mut next = s.schedule_next(max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
@@ -285,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_past_max_date() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, None);
+        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
         let next = s.schedule_next(max_date);
         assert_eq!(true, next.is_none());
@@ -293,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_past_end_date() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, None);
+        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         s.end_date = Some(NaiveDate::from_ymd(2022, 05, 11));
         let next = s.schedule_next(NaiveDate::from_ymd(2023, 05, 11));
         assert_eq!(true, next.is_none());
@@ -301,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_first() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, None);
+        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         s.last_date = None;
         let max_date = NaiveDate::from_ymd(2022, 05, 11);
         let next = s.schedule_next(max_date).unwrap();
@@ -312,7 +314,7 @@ mod tests {
     fn build_schedule(
         frequency: i64,
         period: ScheduleEnum,
-        schedule_modifier: Option<ScheduleModifier>,
+        schedule_modifiers: Vec<ScheduleModifier>,
     ) -> Schedule {
         
         let mut s = Schedule {
@@ -324,7 +326,7 @@ mod tests {
             end_date: None,
             last_date: Some(NaiveDate::from_ymd(2022, 3, 11)),
             entries: Vec::new(),
-            schedule_modifier,
+            schedule_modifiers,
         };
         s.entries.push(ScheduleEntry {
             amount: dec!(100.99),
@@ -344,7 +346,7 @@ mod tests {
     }
 
     fn test_get_next(period: ScheduleEnum, frequency: i64, expected_date: NaiveDate) {
-        let s = build_schedule(frequency, period, None);
+        let s = build_schedule(frequency, period, Vec::new());
         let last_at_start = s.last_date;
         let next_date = s.get_next_date();
         assert_eq!(expected_date, next_date);
@@ -394,7 +396,7 @@ mod tests {
             cycle_count: 0,
         };
 
-        let mut s = build_schedule(3, ScheduleEnum::Months, Some(schedule_modifier));
+        let mut s = build_schedule(3, ScheduleEnum::Months, vec![schedule_modifier]);
         let max_date = NaiveDate::from_ymd(2023, 10, 1);
 
         let mut next = s.schedule_next(max_date).unwrap();
