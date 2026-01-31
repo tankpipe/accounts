@@ -75,13 +75,13 @@ pub fn new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksErr
 #[cfg(test)]
 
 mod tests {
-    use std::{fs::File, io};
+    use std::{fs::File};
     use std::io::prelude::*;
     use rust_decimal::Decimal;
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books, tests}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use super::{Books, load_books};
 
    fn build_books() -> Books {

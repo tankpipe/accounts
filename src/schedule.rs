@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::serializer::*;
 use serde::Deserialize;
-use crate::account::{Transaction, Entry, TransactionStatus, Side};
+use crate::account::{Side};
 
 /// Schedule models.
 
@@ -50,39 +50,8 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    pub fn schedule_next(&mut self, max_date: NaiveDate) -> Option<Transaction> {
-        let next_date = self.get_next_date();        
-
-        for modifier in &mut self.schedule_modifiers {
-            let next_modifier_date = modifier.get_next_date();
-
-            if next_date >= next_modifier_date {
-                modifier.increment(next_modifier_date);
-            }
-        }
-
-        if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
-            let transaction_id = Uuid::new_v4();
-            let entries = self
-                .entries
-                .iter()
-                .map(|e| build_entry(transaction_id, next_date, e, &self.schedule_modifiers))
-                .collect();
-
-            let transaction = Transaction {
-                id: transaction_id,
-                entries: entries,
-                status: TransactionStatus::Projected,
-                schedule_id: Some(self.id),
-            };
-
-            self.last_date = Some(next_date);
-            return Some(transaction);
-        }
-
-        return None;
-    }
-
+    
+    /// Calculate the next traṉsaction date for this schedule with the default being the schedule start_date.
     pub fn get_next_date(&self) -> NaiveDate {
         match self.last_date {
             Some(date) => calculate_next_date(date, self.period, self.frequency, self.start_date),
@@ -95,7 +64,9 @@ impl Schedule {
     }
 }
 
-
+/// Calculate the next date from the prev_date using the period and frequency.
+/// For month and year, the day of the month is preserved.
+/// Ambiguous month-ends are shifted backwards as necessary.
 pub fn calculate_next_date(
     prev_date: NaiveDate,
     period: ScheduleEnum,
@@ -124,30 +95,6 @@ pub fn calculate_next_date(
     new_date
 }
 
-fn build_entry(
-    transaction_id: Uuid,
-    next_date: NaiveDate,
-    entry: &ScheduleEntry,
-    schedule_modifiers: &[ScheduleModifier],
-) -> Entry {
-    let mut entry = Entry {
-        id: Uuid::new_v4(),
-        transaction_id: transaction_id,
-        description: entry.description.clone(),
-        amount: entry.amount.clone(),
-        account_id: entry.account_id,
-        entry_type: entry.entry_type,
-        date: next_date.clone(),
-        balance: None,
-    };
-    
-    // Apply all modifiers in sequence
-    for modifier in schedule_modifiers {
-        entry.amount = modifier.apply(entry.amount);
-    }
-    
-    entry
-}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Modifier {
@@ -187,7 +134,7 @@ impl Modifier {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ScheduleModifier {
-    pub modifier: Modifier,
+    pub modifier_id: Uuid,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     pub next_date: Option<NaiveDate>,
@@ -200,13 +147,13 @@ impl ScheduleModifier {
         self.next_date = Some(new_last_date);
     }
 
-    pub fn apply(&self, amount: Decimal) -> Decimal {
-        self.modifier.apply(amount, self.cycle_count)
+    pub fn apply(&self, amount: Decimal, modifier: &Modifier) -> Decimal {
+        modifier.apply(amount, self.cycle_count)
     }
 
-    pub fn get_next_date(&self) -> NaiveDate {
-        let prev_date = self.next_date.unwrap_or(self.modifier.start_date);
-        self.modifier.get_next_date(prev_date)
+    pub fn get_next_date(&self, modifier: &Modifier) -> NaiveDate {
+        let prev_date = self.next_date.unwrap_or(modifier.start_date);
+        modifier.get_next_date(prev_date)
     }
 }
 
@@ -219,8 +166,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{Schedule, ScheduleEnum, ScheduleEntry, Modifier, calculate_next_date};
-    use crate::account::TransactionStatus;
-
+    
     use crate::account::{Side};
     use crate::schedule::ScheduleModifier;
 
@@ -266,49 +212,6 @@ mod tests {
     #[test]
     fn test_yearly() {
         test_get_next(ScheduleEnum::Years, 1, NaiveDate::from_ymd(2023, 3, 11))
-    }
-
-    #[test]
-    fn test_multiple_monthly() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        let max_date = NaiveDate::from_ymd(2022, 11, 11);
-        let mut next = s.schedule_next(max_date).unwrap();
-        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
-        assert_eq!(s.entries[0].description, next.entries[0].description);
-        assert_eq!(s.entries[0].amount, next.entries[0].amount);
-        assert_eq!(TransactionStatus::Projected, next.status);
-        next = s.schedule_next(max_date).unwrap();
-        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
-        let last = s.schedule_next(max_date);
-        assert!(last.is_none())
-    }
-
-    #[test]
-    fn test_past_max_date() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        let max_date = NaiveDate::from_ymd(2022, 05, 11);
-        let next = s.schedule_next(max_date);
-        assert_eq!(true, next.is_none());
-    }
-
-    #[test]
-    fn test_past_end_date() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        s.end_date = Some(NaiveDate::from_ymd(2022, 05, 11));
-        let next = s.schedule_next(NaiveDate::from_ymd(2023, 05, 11));
-        assert_eq!(true, next.is_none());
-    }
-
-    #[test]
-    fn test_first() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        s.last_date = None;
-        let max_date = NaiveDate::from_ymd(2022, 05, 11);
-        let next = s.schedule_next(max_date).unwrap();
-        assert_eq!(s.start_date, next.entries[0].date);
-        assert_eq!(s.id, next.schedule_id.unwrap());
     }
 
     fn build_schedule(
@@ -360,59 +263,26 @@ mod tests {
         modifier.frequency = 10;
 
         let schedule_modifier = ScheduleModifier {
-            modifier: modifier.clone(),
+            modifier_id: modifier.id,
             next_date: None,
             cycle_count: 0,
         };
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2022, 1, 11));
+        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2022, 1, 11), modifier);
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
     #[test]
     fn test_yearly_modifier() {
-        let mut schedule_modifier = build_schedule_modifier(0, dec!(0), dec!(0));
-        schedule_modifier.modifier.period = ScheduleEnum::Years;
+        let (mut modifier,  schedule_modifier) = build_schedule_modifier(0, dec!(0), dec!(0));
+        modifier.period = ScheduleEnum::Years;
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2023, 1, 1));
+        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2023, 1, 1), modifier);
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
-    #[test]
-    fn test_multiple_monthly_with_modifier() {
-        let modifier = Modifier {
-            id: Uuid::new_v4(),
-            name: "Test Modifier".to_string(),
-            period: ScheduleEnum::Years,
-            frequency: 1,
-            start_date: NaiveDate::from_ymd(2022, 1, 1),
-            end_date: None,
-            amount: Decimal::ZERO,
-            percentage: dec!(0.10),
-        };
-        let schedule_modifier = ScheduleModifier {
-            modifier: modifier.clone(),
-            next_date: None,
-            cycle_count: 0,
-        };
-
-        let mut s = build_schedule(3, ScheduleEnum::Months, vec![schedule_modifier]);
-        let max_date = NaiveDate::from_ymd(2023, 10, 1);
-
-        let mut next = s.schedule_next(max_date).unwrap();
-        for _ in 1..6 {
-            next = s.schedule_next(max_date).unwrap();
-        }
-
-        assert_eq!(NaiveDate::from_ymd(2023, 9, 11), next.entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2023, 9, 11), s.last_date.unwrap());
-        assert_eq!(s.entries[0].description, next.entries[0].description);
-        assert_eq!(s.entries[0].amount * dec!(1.1), next.entries[0].amount);
-        assert_eq!(TransactionStatus::Projected, next.status);
-    }
-
-    fn test_get_next_modifier_date(modifier: ScheduleModifier, expected_date: NaiveDate) {
-        let next_date = modifier.get_next_date();
+    fn test_get_next_modifier_date(schedule_modifier: ScheduleModifier, expected_date: NaiveDate, modifier: Modifier) {
+        let next_date = schedule_modifier.get_next_date(&modifier);
         assert_eq!(expected_date, next_date);
     }
 
@@ -526,13 +396,14 @@ mod tests {
         assert_eq!(dec!(88), m.apply(dec!(100), 3));
     }
 
-    fn build_schedule_modifier(cycle_count: i64, amount: Decimal, percentage: Decimal) -> ScheduleModifier {
+    fn build_schedule_modifier(cycle_count: i64, amount: Decimal, percentage: Decimal) -> (Modifier, ScheduleModifier) {
         let m = build_modifier(amount, percentage);
-        ScheduleModifier {
-            modifier: m,
+        let modifier_id = m.id.clone();
+        (m, ScheduleModifier {
+            modifier_id,
             next_date: None,
             cycle_count,
-        }
+        })
     }
 
     fn build_modifier(amount: Decimal, percentage: Decimal) -> Modifier {

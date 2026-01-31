@@ -3,7 +3,7 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Entry, Transaction, TransactionStatus}, books_prev_versions::BooksV004, scheduler::Scheduler};
+use crate::{account::{Account, Entry, Transaction, TransactionStatus}, scheduler::Scheduler};
 use crate::schedule::{Schedule, Modifier};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
