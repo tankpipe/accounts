@@ -11,7 +11,10 @@ use crate::serializer::*;
 use serde::Deserialize;
 use crate::account::{Side};
 
+pub const DECIMAL_PRECISION: u32 = 4;
+
 /// Schedule models.
+
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ScheduleEntry {
@@ -80,10 +83,6 @@ pub fn calculate_next_date(
         ScheduleEnum::Months => new_date = shift_months(prev_date, frequency.try_into().unwrap()),
         ScheduleEnum::Years => new_date = shift_years(prev_date, frequency.try_into().unwrap()),
     }
-    println!(
-        "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
-        prev_date, new_date, start_date
-    );
     if (period == ScheduleEnum::Months || period == ScheduleEnum::Years) && new_date.day() < start_date.day() {
         let new_month = new_date.month();
         let mut result = new_date.checked_add_signed(Duration::days(1));
@@ -92,6 +91,10 @@ pub fn calculate_next_date(
             result = new_date.checked_add_signed(Duration::days(1));
         }
     }
+    println!(
+        "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
+        prev_date, new_date, start_date
+    );
     new_date
 }
 
@@ -118,7 +121,7 @@ impl Modifier {
         for _ in 0..cycle_count {
             amount = amount + self.amount + self.percentage * amount;
         }
-        amount
+        amount.round_dp(DECIMAL_PRECISION)
     }
 
     pub fn get_next_date(&self, prev_date: NaiveDate) -> NaiveDate {
@@ -168,7 +171,7 @@ mod tests {
     use super::{Schedule, ScheduleEnum, ScheduleEntry, Modifier, calculate_next_date};
     
     use crate::account::{Side};
-    use crate::schedule::ScheduleModifier;
+    use crate::schedule::{DECIMAL_PRECISION, ScheduleModifier};
 
     
     #[test]
@@ -386,7 +389,7 @@ mod tests {
         for _ in 0..5 {
             expected = expected + dec!(2) + dec!(0.05) * expected;
         }
-        assert_eq!(expected, m.apply(dec!(100), 5));
+        assert_eq!(expected.round_dp(DECIMAL_PRECISION), m.apply(dec!(100), 5));
     }
 
     #[test]

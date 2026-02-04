@@ -268,6 +268,9 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::{account::*, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum, ScheduleModifier}, scheduler::{Scheduler}};
+    use std::fs;
+    use std::path::Path;
+    use std::str::FromStr;
 
 
     #[test]
@@ -454,7 +457,7 @@ mod tests {
         return s;
     }
 
- #[test]
+    #[test]
     fn test_tri_monthly_with_annual_modifier() {
         let modifier = Modifier {
             id: Uuid::new_v4(),
@@ -477,25 +480,122 @@ mod tests {
         let mut scheduler = Scheduler {
             schedules: vec![schedule],
             end_date: None,
-            modifiers: vec![modifier]
+            modifiers: vec![modifier],
         };
 
-        let transactions = scheduler.generate_by_schedule(NaiveDate::from_ymd(2023, 10, 1), schedule_id);
-        
-        assert_eq!(NaiveDate::from_ymd(2023, 9, 11), transactions.last().unwrap().entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2023, 9, 11), scheduler.schedules[0].last_date.unwrap());
-        assert_eq!(dec!(100.99) * dec!(1.1), transactions.last().unwrap().entries[0].amount);
-        assert_eq!(TransactionStatus::Projected, transactions.last().unwrap().status);
-        assert_eq!(NaiveDate::from_ymd(2023, 1, 1), scheduler.schedules[0].schedule_modifiers[0].next_date.unwrap());
+        assert_schedule_csv(
+            &mut scheduler,
+            schedule_id,
+            "tri_monthly_with_annual_modifier.csv",
+        );
+    }
 
-        let transactions = scheduler.generate_by_schedule(NaiveDate::from_ymd(2024, 10, 1), schedule_id);
-        assert_eq!(NaiveDate::from_ymd(2024, 9, 11), transactions.last().unwrap().entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2024, 9, 11), transactions.last().unwrap().entries[1].date);
-        assert_eq!(NaiveDate::from_ymd(2024, 9, 11), scheduler.schedules[0].last_date.unwrap());
-        assert_eq!(dec!(100.99) * dec!(1.1) * dec!(1.1), transactions.last().unwrap().entries[0].amount);
-        assert_eq!(dec!(100.99) * dec!(1.1) * dec!(1.1), transactions.last().unwrap().entries[1].amount);
-        assert_eq!(NaiveDate::from_ymd(2024, 9, 11), scheduler.schedules[0].last_date.unwrap());
-        assert_eq!(NaiveDate::from_ymd(2024, 1, 1), scheduler.schedules[0].schedule_modifiers[0].next_date.unwrap());
+#[test]
+    fn test_monthly_with_multiple_modifiers() {
+        let modifier1 = Modifier {
+            id: Uuid::new_v4(),
+            name: "Test Modifier 1".to_string(),
+            period: ScheduleEnum::Months,
+            frequency: 3,
+            start_date: NaiveDate::from_ymd(2022, 1, 1),
+            end_date: None,
+            amount: Decimal::ZERO,
+            percentage: dec!(0.05),
+        };
+        let schedule_modifier1 = ScheduleModifier {
+            modifier_id: modifier1.id,
+            next_date: None,
+            cycle_count: 0,
+        };
+
+        let modifier2 = Modifier {
+            id: Uuid::new_v4(),
+            name: "Test Modifier 2".to_string(),
+            period: ScheduleEnum::Years,
+            frequency: 1,
+            start_date: NaiveDate::from_ymd(2022, 2, 10),
+            end_date: None,
+            amount: Decimal::ZERO,
+            percentage: dec!(0.10),
+        };
+        let schedule_modifier2 = ScheduleModifier {
+            modifier_id: modifier2.id,
+            next_date: None,
+            cycle_count: 0,
+        };
+
+        let schedule = build_schedule(
+            1, ScheduleEnum::Months, vec![schedule_modifier1, schedule_modifier2]);
+        let schedule_id = schedule.id;
+        let mut scheduler = Scheduler {
+            schedules: vec![schedule],
+            end_date: None,
+            modifiers: vec![modifier1, modifier2],
+        };
+
+        assert_schedule_csv(
+            &mut scheduler,
+            schedule_id,
+            "monthly_with_multiple_modifiers.csv",
+        );
+    }
+
+
+    /// Assert the scheduler generates the expected transactions from the fixture csv.
+    fn assert_schedule_csv(
+        scheduler: &mut Scheduler,
+        schedule_id: Uuid,
+        fixture_name: &str,
+    ) {
+        let csv_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(fixture_name);
+        let csv = fs::read_to_string(&csv_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {}", csv_path.display(), err));
+
+        for (line_index, line) in csv.lines().enumerate() {
+            if line_index == 0 || line.trim().is_empty() {
+                continue;
+            }
+
+            let parts: Vec<&str> = line.split(',').map(|part| part.trim()).collect();
+            assert_eq!(5, parts.len(), "invalid csv row at line {}", line_index + 1);
+
+            let to_date = NaiveDate::parse_from_str(parts[0], "%Y-%m-%d")
+                .unwrap_or_else(|err| panic!("invalid to_date at line {}: {}", line_index + 1, err));
+            
+            
+            let expected_last_tx_date: NaiveDate = NaiveDate::parse_from_str(parts[1], "%Y-%m-%d")
+                .unwrap_or_else(|err| panic!("invalid last_tx_date at line {}: {}", line_index + 1, err));            
+            
+            let expected_last_amount: Option<Decimal> = if parts[2].is_empty() { None } else {
+                Some(Decimal::from_str(parts[2])
+                    .unwrap_or_else(|err| panic!("invalid last_amount at line {}: {}", line_index + 1, err)))
+            };
+
+            let expected_modifier_next_date = NaiveDate::parse_from_str(parts[3], "%Y-%m-%d")
+                .unwrap_or_else(|err| panic!("invalid modifier_next_date at line {}: {}", line_index + 1, err));
+
+            let expected_tx_count: usize = parts[4]
+                .parse()
+                .unwrap_or_else(|err| panic!("invalid txn_count at line {}: {}", line_index + 1, err));
+
+            let transactions = scheduler.generate_by_schedule(to_date, schedule_id);
+
+            assert_eq!(expected_tx_count, transactions.len());
+            assert_eq!(expected_last_tx_date, scheduler.schedules[0].last_date.unwrap());
+            assert_eq!(
+                expected_modifier_next_date,
+                scheduler.schedules[0].schedule_modifiers[0].next_date.unwrap()
+            );
+            if transactions.len() > 0 {
+                assert_eq!(expected_last_tx_date, transactions.last().unwrap().entries[0].date);                
+                assert_eq!(expected_last_amount.unwrap(), transactions.last().unwrap().entries[0].amount);
+                assert_eq!(TransactionStatus::Projected, transactions.last().unwrap().status);                
+            }
+            
+        }
     }
 
 }
