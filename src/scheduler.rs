@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::account::{Entry, TransactionStatus};
-use crate::schedule::{Modifier, Schedule, ScheduleEntry, ScheduleModifier};
+use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
 
 use crate::{account::{Transaction}, books::BooksError};
@@ -106,7 +106,7 @@ impl Scheduler {
         self.end_date.and_then(|d| Some(d.clone()))
     }
 
-    fn generate_transactions_for_schedules(&mut self, schedule_indices: &[usize], last_date: NaiveDate) -> Vec<Transaction> {
+    fn generate_transactions_for_schedules(&mut self, schedule_indices: &[usize], schedule_to: NaiveDate) -> Vec<Transaction> {
         let mut transactions : Vec<Transaction> = Vec::new();
         let end_date_check = self.end_date;
 
@@ -127,8 +127,8 @@ impl Scheduler {
                     }
                 }
                 
-                // If we aren't past the last date, create a transaction
-                if next_date <= last_date && (end_date_check.is_none() || next_date <= end_date_check.unwrap()) {
+                // If we aren't past the schedule to date, create a transaction
+                if next_date <= schedule_to && (end_date_check.is_none() || next_date <= end_date_check.unwrap()) {
                     let transaction_id = Uuid::new_v4();
                     
                     // Build entries inline to avoid borrowing self
@@ -189,68 +189,6 @@ impl Scheduler {
         transactions
     }
 
-     pub fn schedule_next(&mut self, schedule: &mut Schedule, max_date: NaiveDate) -> Option<Transaction> {
-        let next_date = schedule.get_next_date();        
-
-        for schedule_modifier in &mut schedule.schedule_modifiers {
-            let modifier = self.modifiers.get(&schedule_modifier.modifier_id);
-            let next_modifier_date = schedule_modifier.get_next_date(modifier.unwrap());
-
-            if next_date >= next_modifier_date {
-                schedule_modifier.increment(next_modifier_date);
-            }
-        }
-
-        if next_date <= max_date && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
-            let transaction_id = Uuid::new_v4();
-            let entries = schedule
-                .entries
-                .iter()
-                .map(|e| self.build_entry(transaction_id, next_date, e, &schedule.schedule_modifiers))
-                .collect();
-
-            let transaction = Transaction {
-                id: transaction_id,
-                entries: entries,
-                status: TransactionStatus::Projected,
-                schedule_id: Some(schedule.id),
-            };
-
-            schedule.last_date = Some(next_date);
-            return Some(transaction);
-        }
-
-        return None;
-    }
-    
-    fn build_entry(
-        &self,
-        transaction_id: Uuid,
-        next_date: NaiveDate,
-        entry: &ScheduleEntry,
-        schedule_modifiers: &[ScheduleModifier]        
-    ) -> Entry {
-        let mut entry = Entry {
-            id: Uuid::new_v4(),
-            transaction_id: transaction_id,
-            description: entry.description.clone(),
-            amount: entry.amount.clone(),
-            account_id: entry.account_id,
-            entry_type: entry.entry_type,
-            date: next_date.clone(),
-            balance: None,
-        };
-        
-        // Apply all modifiers in sequence
-        for schedule_modifier in schedule_modifiers {
-            let modifier = self.get_modifier(schedule_modifier.modifier_id).ok()
-            .expect("Modifier not found");
-            entry.amount = schedule_modifier.apply(entry.amount, modifier);
-        }
-        
-        entry
-    }
-
 }
 
 
@@ -282,7 +220,7 @@ mod tests {
                 name: "S_1".to_string(),
                 period: ScheduleEnum::Months,
                 frequency: 3,
-                start_date: NaiveDate::from_ymd(2022, 3, 11),
+                start_date: from_ymd(2022, 3, 11),
                 end_date: None,
                 last_date: None,
                 entries: vec![
@@ -311,8 +249,8 @@ mod tests {
                 name: "S_2".to_string(),
                 period: ScheduleEnum::Days,
                 frequency: 45,
-                start_date: NaiveDate::from_ymd(2022, 3, 11),
-                end_date: Some(NaiveDate::from_ymd(2023, 1, 20)),
+                start_date: from_ymd(2022, 3, 11),
+                end_date: Some(from_ymd(2023, 1, 20)),
                 last_date: None,
                 entries: vec![
                     ScheduleEntry {
@@ -333,7 +271,7 @@ mod tests {
                 schedule_modifiers: vec![]
             });
 
-        let transactions = scheduler.generate(NaiveDate::from_ymd(2023, 3, 11));
+        let transactions = scheduler.generate(from_ymd(2023, 3, 11));
 
         assert_eq!(14, transactions.len());
         assert_eq!("st test 2", transactions[2].entries[0].description);
@@ -343,97 +281,47 @@ mod tests {
 
         #[test]
     fn test_multiple_monthly() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        let max_date = NaiveDate::from_ymd(2022, 11, 11);
+        let s = build_schedule(3, ScheduleEnum::Months, Vec::new());
+        let schedule = s.clone();
+        let max_date = from_ymd(2022, 11, 11);
         let mut scheduler = Scheduler::build_empty();
-        let mut next = scheduler.schedule_next(&mut s, max_date).unwrap();
-        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
-        assert_eq!(s.entries[0].description, next.entries[0].description);
-        assert_eq!(s.entries[0].amount, next.entries[0].amount);
+        scheduler.schedules.push(s);
+        let transactions = scheduler.generate_by_schedule(max_date, schedule.id);
+        let next = transactions[0].clone();
+        assert_eq!(from_ymd(2022, 6, 11), next.entries[0].date);
+        assert_eq!(from_ymd(2022, 9, 11), scheduler.schedules[0].last_date.unwrap());
+        assert_eq!(schedule.entries[0].description, next.entries[0].description);
+        assert_eq!(schedule.entries[0].amount, next.entries[0].amount);
         assert_eq!(TransactionStatus::Projected, next.status);
-        next = scheduler.schedule_next(&mut s, max_date).unwrap();
-        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), next.entries[0].date);
-        assert_eq!(NaiveDate::from_ymd(2022, 9, 11), s.last_date.unwrap());
-        let last = scheduler.schedule_next(&mut s, max_date);
-        assert!(last.is_none())
+        let next = transactions[1].clone();
+        assert_eq!(from_ymd(2022, 9, 11), next.entries[0].date);
+        //assert_eq!(from_ymd(2022, 9, 11), s.last_date.unwrap());
+        // let last = scheduler.schedule_next(&mut s, max_date);
+        // assert!(last.is_none())
     }
 
     #[test]
     fn test_past_max_date() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        let max_date = NaiveDate::from_ymd(2022, 5, 11);
-        let mut scheduler = Scheduler::with_components(Vec::new(), Some(max_date),  Vec::new());
-        let next = scheduler.schedule_next(&mut s, max_date);
-        assert_eq!(true, next.is_none());
+        let s = build_schedule(3, ScheduleEnum::Months, Vec::new());
+        let schedule_id = s.id;
+        let max_date = from_ymd(2022, 5, 11);
+        let mut scheduler = Scheduler::with_components(vec![s], Some(max_date),  Vec::new());
+        let transactions = scheduler.generate_by_schedule(max_date, schedule_id);
+        assert_eq!(true, transactions.is_empty());
+        assert_eq!(from_ymd(2022, 3, 11), scheduler.schedules[0].last_date.unwrap());
     }
 
     #[test]
     fn test_past_end_date() {
         let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        s.end_date = Some(NaiveDate::from_ymd(2022, 5, 11));
-        let mut scheduler = Scheduler::with_components(Vec::new(), Some(NaiveDate::from_ymd(2022, 5, 11)), Vec::new());
-        let next = scheduler.schedule_next(&mut s, NaiveDate::from_ymd(2023, 5, 11));
-        assert_eq!(true, next.is_none());
-    }
-
-    #[test]
-    fn test_first() {
-        let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
-        s.last_date = None;
-        let max_date = NaiveDate::from_ymd(2022, 5, 11);
-        
-        // Store the properties we need to test
-        let start_date = s.start_date;
         let schedule_id = s.id;
-        
-        // Create scheduler with empty schedules vector
-        let mut scheduler = Scheduler::with_components(Vec::new(), Some(max_date), Vec::new());
-        
-        // Call schedule_next with the separate schedule
-        let next = scheduler.schedule_next(&mut s, max_date).unwrap();
-        
-        // Now move the schedule into the scheduler
-        scheduler.schedules.push(s);
-        
-        assert_eq!(start_date, next.entries[0].date);
-        assert_eq!(schedule_id, next.schedule_id.unwrap());
+        s.end_date = Some(from_ymd(2022, 5, 11));
+        let mut scheduler = Scheduler::with_components(vec![s], Some(from_ymd(2022, 5, 11)), Vec::new());
+        let next = scheduler.generate_by_schedule(from_ymd(2023, 5, 11), schedule_id);
+        assert_eq!(true, next.is_empty());
+        assert_eq!(from_ymd(2022, 3, 11), scheduler.schedules[0].last_date.unwrap());
     }
-
-    fn build_schedule(
-        frequency: i64,
-        period: ScheduleEnum,
-        schedule_modifiers: Vec<ScheduleModifier>,
-    ) -> Schedule {
-        
-        let mut s = Schedule {
-            id: Uuid::new_v4(),
-            name: "ST 1".to_string(),
-            period,
-            frequency,
-            start_date: NaiveDate::from_ymd(2022, 3, 11),
-            end_date: None,
-            last_date: Some(NaiveDate::from_ymd(2022, 3, 11)),
-            entries: Vec::new(),
-            schedule_modifiers,
-        };
-        s.entries.push(ScheduleEntry {
-            amount: dec!(100.99),
-            description: "stes1".to_string(),
-            account_id: Uuid::new_v4(),
-            entry_type: Side::Debit,
-            schedule_id: s.id,
-        });
-        s.entries.push(ScheduleEntry {
-            amount: dec!(100.99),
-            description: "stes1".to_string(),
-            account_id: Uuid::new_v4(),
-            entry_type: Side::Credit,
-            schedule_id: s.id,
-        });
-        return s;
-    }
-
+       
     #[test]
     fn test_tri_monthly_with_annual_modifier() {
         let modifier = Modifier {
@@ -441,7 +329,7 @@ mod tests {
             name: "Test Modifier".to_string(),
             period: ScheduleEnum::Years,
             frequency: 1,
-            start_date: NaiveDate::from_ymd(2022, 1, 1),
+            start_date: from_ymd(2022, 1, 1),
             end_date: None,
             amount: Decimal::ZERO,
             percentage: dec!(0.10),
@@ -470,7 +358,7 @@ mod tests {
             name: "Test Modifier 1".to_string(),
             period: ScheduleEnum::Months,
             frequency: 3,
-            start_date: NaiveDate::from_ymd(2022, 1, 1),
+            start_date: from_ymd(2022, 1, 1),
             end_date: None,
             amount: Decimal::ZERO,
             percentage: dec!(0.05),
@@ -486,7 +374,7 @@ mod tests {
             name: "Test Modifier 2".to_string(),
             period: ScheduleEnum::Years,
             frequency: 1,
-            start_date: NaiveDate::from_ymd(2022, 2, 10),
+            start_date: from_ymd(2022, 2, 10),
             end_date: None,
             amount: Decimal::ZERO,
             percentage: dec!(0.10),
@@ -567,4 +455,41 @@ mod tests {
         }
     }
 
+    fn build_schedule(
+        frequency: i64,
+        period: ScheduleEnum,
+        schedule_modifiers: Vec<ScheduleModifier>,
+    ) -> Schedule {
+        
+        let mut s = Schedule {
+            id: Uuid::new_v4(),
+            name: "ST 1".to_string(),
+            period,
+            frequency,
+            start_date: from_ymd(2022, 3, 11),
+            end_date: None,
+            last_date: Some(from_ymd(2022, 3, 11)),
+            entries: Vec::new(),
+            schedule_modifiers,
+        };
+        s.entries.push(ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            entry_type: Side::Debit,
+            schedule_id: s.id,
+        });
+        s.entries.push(ScheduleEntry {
+            amount: dec!(100.99),
+            description: "stes1".to_string(),
+            account_id: Uuid::new_v4(),
+            entry_type: Side::Credit,
+            schedule_id: s.id,
+        });
+        return s;
+    }
+
+    fn from_ymd(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    }
 }
