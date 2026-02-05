@@ -108,7 +108,6 @@ impl Scheduler {
 
     fn generate_transactions_for_schedules(&mut self, schedule_indices: &[usize], schedule_to: NaiveDate) -> Vec<Transaction> {
         let mut transactions : Vec<Transaction> = Vec::new();
-        let end_date_check = self.end_date;
 
         for &index in schedule_indices {
             let schedule = &mut self.schedules[index];
@@ -127,8 +126,8 @@ impl Scheduler {
                     }
                 }
                 
-                // If we aren't past the schedule to date, create a transaction
-                if next_date <= schedule_to && (end_date_check.is_none() || next_date <= end_date_check.unwrap()) {
+                // If we aren't past the schedule to date or end date, create a transaction
+                if next_date <= schedule_to && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
                     let transaction_id = Uuid::new_v4();
                     
                     // Build entries inline to avoid borrowing self
@@ -336,7 +335,7 @@ mod tests {
         };
         let schedule_modifier = ScheduleModifier {
             modifier_id: modifier.id,
-            next_date: None,
+            last_date: None,
             cycle_count: 0,
         };
 
@@ -365,7 +364,7 @@ mod tests {
         };
         let schedule_modifier1 = ScheduleModifier {
             modifier_id: modifier1.id,
-            next_date: None,
+            last_date: None,
             cycle_count: 0,
         };
 
@@ -381,7 +380,7 @@ mod tests {
         };
         let schedule_modifier2 = ScheduleModifier {
             modifier_id: modifier2.id,
-            next_date: None,
+            last_date: None,
             cycle_count: 0,
         };
 
@@ -431,8 +430,8 @@ mod tests {
                     .unwrap_or_else(|err| panic!("invalid last_amount at line {}: {}", line_index + 1, err)))
             };
 
-            let expected_modifier_next_date = NaiveDate::parse_from_str(parts[3], "%Y-%m-%d")
-                .unwrap_or_else(|err| panic!("invalid modifier_next_date at line {}: {}", line_index + 1, err));
+            let expected_modifier_last_date = NaiveDate::parse_from_str(parts[3], "%Y-%m-%d")
+                .unwrap_or_else(|err| panic!("invalid modifier_last_date at line {}: {}", line_index + 1, err));
 
             let expected_tx_count: usize = parts[4]
                 .parse()
@@ -443,8 +442,8 @@ mod tests {
             assert_eq!(expected_tx_count, transactions.len());
             assert_eq!(expected_last_tx_date, scheduler.schedules[0].last_date.unwrap());
             assert_eq!(
-                expected_modifier_next_date,
-                scheduler.schedules[0].schedule_modifiers[0].next_date.unwrap()
+                expected_modifier_last_date,
+                scheduler.schedules[0].schedule_modifiers[0].last_date.unwrap()
             );
             if transactions.len() > 0 {
                 assert_eq!(expected_last_tx_date, transactions.last().unwrap().entries[0].date);                

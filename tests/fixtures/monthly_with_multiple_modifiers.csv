@@ -1,4 +1,4 @@
-to_date,expected_last_tx_date,expected_last_amount,expected_modifier_next_date,expected_tx_count
+to_date,expected_last_tx_date,expected_last_amount,expected_modifier_last_date,expected_tx_count
 2022-04-11,2022-04-11,106.0395,2022-04-01,1
 2022-06-11,2022-06-11,106.0395,2022-07-01,2
 2022-07-11,2022-07-11,111.3415,2022-07-01,1

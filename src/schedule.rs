@@ -140,14 +140,14 @@ pub struct ScheduleModifier {
     pub modifier_id: Uuid,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
-    pub next_date: Option<NaiveDate>,
+    pub last_date: Option<NaiveDate>,
     pub cycle_count: i64,
 }
 
 impl ScheduleModifier {
     pub fn increment(&mut self, new_last_date: NaiveDate) {
         self.cycle_count += 1;
-        self.next_date = Some(new_last_date);
+        self.last_date = Some(new_last_date);
     }
 
     pub fn apply(&self, amount: Decimal, modifier: &Modifier) -> Decimal {
@@ -155,7 +155,7 @@ impl ScheduleModifier {
     }
 
     pub fn get_next_date(&self, modifier: &Modifier) -> NaiveDate {
-        let prev_date = self.next_date.unwrap_or(modifier.start_date);
+        let prev_date = self.last_date.unwrap_or(modifier.start_date);
         modifier.get_next_date(prev_date)
     }
 }
@@ -267,7 +267,7 @@ mod tests {
 
         let schedule_modifier = ScheduleModifier {
             modifier_id: modifier.id,
-            next_date: None,
+            last_date: None,
             cycle_count: 0,
         };
 
@@ -404,7 +404,7 @@ mod tests {
         let modifier_id = m.id.clone();
         (m, ScheduleModifier {
             modifier_id,
-            next_date: None,
+            last_date: None,
             cycle_count,
         })
     }
