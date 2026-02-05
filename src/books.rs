@@ -334,7 +334,7 @@ impl Books {
         self.scheduler.delete_modifier(id)
     }
 
-    pub fn modifiers(&self) -> &[Modifier] {
+    pub fn modifiers(&self) -> Vec<&Modifier> {
         self.scheduler.modifiers()
     }
 

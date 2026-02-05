@@ -15,17 +15,21 @@ pub struct Scheduler {
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
     end_date: Option<NaiveDate>,
-    modifiers: Vec<Modifier>,
+    modifiers: std::collections::HashMap<Uuid, Modifier>,
 }
 
 impl Scheduler {
 
     pub fn build_empty() -> Scheduler {
-        Scheduler{schedules: Vec::new(), end_date: None, modifiers: Vec::new()}
+        Scheduler{schedules: Vec::new(), end_date: None, modifiers: std::collections::HashMap::new()}
     }
 
     pub fn with_components(schedules: Vec<Schedule>, end_date: Option<NaiveDate>, modifiers: Vec<Modifier>) -> Scheduler {
-        Scheduler { schedules, end_date, modifiers }
+        let mut s =Scheduler { schedules, end_date, modifiers: std::collections::HashMap::new() };
+        for modifier in modifiers {
+            s.modifiers.insert(modifier.id, modifier);
+        }
+        s
     }
 
     pub fn add_schedule(&mut self, schedule: Schedule) {
@@ -67,37 +71,35 @@ impl Scheduler {
     }
 
     pub fn add_modifier(&mut self, modifier: Modifier) {
-        self.modifiers.push(modifier);
+        self.modifiers.insert(modifier.id, modifier);
     }
 
     pub fn get_modifier(&self, modifier_id: Uuid) -> Result<&Modifier, BooksError> {
-        if let Some(index) = self.modifiers.iter().position(|m| m.id == modifier_id) {
-            Ok(&self.modifiers[index])
+        if let Some(modifier) = self.modifiers.get(&modifier_id) {
+            Ok(modifier)
         } else {
             Err(BooksError { error: "Modifier not found".to_string() })
         }
     }
 
     pub fn update_modifier(&mut self, modifier: Modifier) -> Result<(), BooksError> {
-        if let Some(index) = self.modifiers.iter().position(|m| m.id == modifier.id) {
-            let _old = std::mem::replace(&mut self.modifiers[index], modifier);
+        if self.modifiers.insert(modifier.id, modifier).is_some() {
             Ok(())
         } else {
             Err(BooksError { error: "Modifier not found".to_string() })
-        }
+        }        
     }
 
     pub fn delete_modifier(&mut self, id: &Uuid) -> Result<(), BooksError> {
-        if let Some(index) = self.modifiers.iter().position(|m| m.id == *id) {
-            self.modifiers.remove(index);
+        if self.modifiers.remove(id).is_some() {
             Ok(())
         } else {
             Err(BooksError { error: "Modifier not found".to_string() })
         }
     }
 
-    pub fn modifiers(&self) -> &[Modifier] {
-        self.modifiers.as_slice()
+    pub fn modifiers(&self) -> Vec<&Modifier> {
+        self.modifiers.values().collect()
     }
 
     pub fn end_date(&self) -> Option<NaiveDate> {
@@ -106,12 +108,6 @@ impl Scheduler {
 
     fn generate_transactions_for_schedules(&mut self, schedule_indices: &[usize], last_date: NaiveDate) -> Vec<Transaction> {
         let mut transactions : Vec<Transaction> = Vec::new();
-        
-        // Collect all modifiers we'll need before borrowing schedules mutably
-        let all_modifiers: std::collections::HashMap<Uuid, Modifier> = self.modifiers.iter()
-            .map(|m| (m.id, m.clone()))
-            .collect();
-        
         let end_date_check = self.end_date;
 
         for &index in schedule_indices {
@@ -122,7 +118,7 @@ impl Scheduler {
                 
                 // Check if we need to increment any modifiers based on next_date.
                 for schedule_modifier in &mut schedule.schedule_modifiers {
-                    if let Some(modifier) = all_modifiers.get(&schedule_modifier.modifier_id) {
+                    if let Some(modifier) = self.modifiers.get(&schedule_modifier.modifier_id) {
                         let next_modifier_date = schedule_modifier.get_next_date(modifier);
                         
                         if next_date >= next_modifier_date {
@@ -151,7 +147,7 @@ impl Scheduler {
                         
                         // Apply all modifiers in sequence
                         for schedule_modifier in &schedule.schedule_modifiers {
-                            if let Some(modifier) = all_modifiers.get(&schedule_modifier.modifier_id) {
+                            if let Some(modifier) = self.modifiers.get(&schedule_modifier.modifier_id) {
                                 built_entry.amount = schedule_modifier.apply(built_entry.amount, modifier);
                             }
                         }
@@ -197,7 +193,7 @@ impl Scheduler {
         let next_date = schedule.get_next_date();        
 
         for schedule_modifier in &mut schedule.schedule_modifiers {
-            let modifier = self.modifiers.iter().find(|m| m.id == schedule_modifier.modifier_id);
+            let modifier = self.modifiers.get(&schedule_modifier.modifier_id);
             let next_modifier_date = schedule_modifier.get_next_date(modifier.unwrap());
 
             if next_date >= next_modifier_date {
@@ -275,11 +271,8 @@ mod tests {
 
     #[test]
     fn test_generate() {
-        let mut scheduler  = Scheduler{
-            schedules: Vec::new(),
-            end_date: None,
-            modifiers: Vec::new()
-        };
+        let mut scheduler  = Scheduler::build_empty();
+        
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let s_id_1 = Uuid::new_v4();
@@ -352,11 +345,7 @@ mod tests {
     fn test_multiple_monthly() {
         let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let max_date = NaiveDate::from_ymd(2022, 11, 11);
-        let mut scheduler = Scheduler {
-            schedules: Vec::new(),
-            end_date: None,
-            modifiers: Vec::new()
-        };
+        let mut scheduler = Scheduler::build_empty();
         let mut next = scheduler.schedule_next(&mut s, max_date).unwrap();
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), next.entries[0].date);
         assert_eq!(NaiveDate::from_ymd(2022, 6, 11), s.last_date.unwrap());
@@ -374,11 +363,7 @@ mod tests {
     fn test_past_max_date() {
         let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let max_date = NaiveDate::from_ymd(2022, 5, 11);
-        let mut scheduler = Scheduler {
-            schedules: Vec::new(),
-            end_date: Some(max_date),
-            modifiers: Vec::new()
-        };
+        let mut scheduler = Scheduler::with_components(Vec::new(), Some(max_date),  Vec::new());
         let next = scheduler.schedule_next(&mut s, max_date);
         assert_eq!(true, next.is_none());
     }
@@ -387,11 +372,7 @@ mod tests {
     fn test_past_end_date() {
         let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         s.end_date = Some(NaiveDate::from_ymd(2022, 5, 11));
-        let mut scheduler = Scheduler {
-            schedules: Vec::new(),
-            end_date: Some(NaiveDate::from_ymd(2022, 5, 11)),
-            modifiers: Vec::new()
-        };
+        let mut scheduler = Scheduler::with_components(Vec::new(), Some(NaiveDate::from_ymd(2022, 5, 11)), Vec::new());
         let next = scheduler.schedule_next(&mut s, NaiveDate::from_ymd(2023, 5, 11));
         assert_eq!(true, next.is_none());
     }
@@ -407,11 +388,7 @@ mod tests {
         let schedule_id = s.id;
         
         // Create scheduler with empty schedules vector
-        let mut scheduler = Scheduler {
-            schedules: Vec::new(),
-            end_date: Some(max_date),
-            modifiers: Vec::new()
-        };
+        let mut scheduler = Scheduler::with_components(Vec::new(), Some(max_date), Vec::new());
         
         // Call schedule_next with the separate schedule
         let next = scheduler.schedule_next(&mut s, max_date).unwrap();
@@ -477,11 +454,7 @@ mod tests {
 
         let schedule = build_schedule(3, ScheduleEnum::Months, vec![schedule_modifier]);
         let schedule_id = schedule.id;
-        let mut scheduler = Scheduler {
-            schedules: vec![schedule],
-            end_date: None,
-            modifiers: vec![modifier],
-        };
+        let mut scheduler = Scheduler::with_components(vec![schedule], None, vec![modifier]);
 
         assert_schedule_csv(
             &mut scheduler,
@@ -527,11 +500,7 @@ mod tests {
         let schedule = build_schedule(
             1, ScheduleEnum::Months, vec![schedule_modifier1, schedule_modifier2]);
         let schedule_id = schedule.id;
-        let mut scheduler = Scheduler {
-            schedules: vec![schedule],
-            end_date: None,
-            modifiers: vec![modifier1, modifier2],
-        };
+        let mut scheduler = Scheduler::with_components(vec![schedule], None, vec![modifier1, modifier2]);
 
         assert_schedule_csv(
             &mut scheduler,
