@@ -1,0 +1,111 @@
+{
+    "id": "d8c4f6e8-1488-4e85-a0ab-f4c599373239",
+    "name": "My Books v0.0.4",
+    "version": "0.0.4",
+    "accounts": {
+        "874bda0f-aafe-426b-b7ca-253e0e9aba5e": {
+            "id": "874bda0f-aafe-426b-b7ca-253e0e9aba5e",
+            "name": "Savings Account 1",
+            "account_type": "Asset",
+            "balance": "0",
+            "starting_balance": "0"
+        },
+        "e6c643db-458a-4657-b7ae-799c6f2b5555": {
+            "id": "e6c643db-458a-4657-b7ae-799c6f2b5555",
+            "name": "Credit Account 1",
+            "account_type": "Liability",
+            "balance": "0",
+            "starting_balance": "0"
+        }
+    },
+    "scheduler": {
+        "schedules": [
+            {
+                "id": "3f496396-5cfc-46ca-9133-dc0ddac4f46a",
+                "name": "Some income",
+                "period": "Months",
+                "frequency": 1,
+                "start_date": "2022-06-04",
+                "end_date": "null",
+                "last_date": "2022-06-04",
+                "entries": [
+                    {
+                        "schedule_id": "3f496396-5cfc-46ca-9133-dc0ddac4f46a",
+                        "description": "Money in",
+                        "account_id": "874bda0f-aafe-426b-b7ca-253e0e9aba5e",
+                        "entry_type": "Debit",
+                        "amount": "200"
+                    },
+                    {
+                        "schedule_id": "3f496396-5cfc-46ca-9133-dc0ddac4f46a",
+                        "description": "Money in",
+                        "account_id": "e6c643db-458a-4657-b7ae-799c6f2b5555",
+                        "entry_type": "Credit",
+                        "amount": "200"
+                    }
+                ]
+            }
+        ],
+        "end_date": "null"        
+    },
+    "transactions": [
+        {
+            "id": "98938e72-2702-4cd3-84b5-bab823572215",
+            "entries": [
+                {
+                    "id": "56d1f98c-a6d2-479a-a296-d9c3db99c2a4",
+                    "transaction_id": "98938e72-2702-4cd3-84b5-bab823572215",
+                    "date": "2022-06-04",
+                    "description": "received moneys",
+                    "account_id": "874bda0f-aafe-426b-b7ca-253e0e9aba5e",
+                    "entry_type": "Debit",
+                    "amount": "10000",
+                    "balance": null
+                },
+                {
+                    "id": "8a28ee99-eb72-4316-b42a-2194b197d74c",
+                    "transaction_id": "98938e72-2702-4cd3-84b5-bab823572215",
+                    "date": "2022-06-04",
+                    "description": "received moneys",
+                    "account_id": "e6c643db-458a-4657-b7ae-799c6f2b5555",
+                    "entry_type": "Credit",
+                    "amount": "10000",
+                    "balance": null
+                }
+            ],
+            "status": "Recorded",
+            "schedule_id": null
+        },
+        {
+            "id": "89427804-0324-4226-8a4b-af00d3d5c69c",
+            "entries": [
+                {
+                    "id": "ec9dbd09-01f1-40be-b934-2e3cd3d6e858",
+                    "transaction_id": "89427804-0324-4226-8a4b-af00d3d5c69c",
+                    "date": "2022-06-05",
+                    "description": "Gave some moneys back",
+                    "account_id": "e6c643db-458a-4657-b7ae-799c6f2b5555",
+                    "entry_type": "Debit",
+                    "amount": "98.99",
+                    "balance": null
+                },
+                {
+                    "id": "9fed34c2-415f-4dc1-a901-3ae3c94a89a1",
+                    "transaction_id": "89427804-0324-4226-8a4b-af00d3d5c69c",
+                    "date": "2022-06-05",
+                    "description": "Gave some moneys back",
+                    "account_id": "874bda0f-aafe-426b-b7ca-253e0e9aba5e",
+                    "entry_type": "Credit",
+                    "amount": "98.99",
+                    "balance": null
+                }
+            ],
+            "status": "Recorded",
+            "schedule_id": null
+        }
+    ],
+    "modifiers": [],
+    "settings": {
+        "require_double_entry": false
+    }
+}

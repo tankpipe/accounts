@@ -1,19 +1,36 @@
 #![allow(dead_code)]
 use std::{path::Path, fs::File, io::Read};
 use std::{io};
+use serde_json::Value;
 
 use crate::books::{Books, BooksError};
+use crate::books_prev_versions::BooksV004;
 
 /// Simple JSON file storage for Books.
 
 pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
     match File::open(path) {
-        Err(why) => println!("Open file failed : {:?}", why.kind()),
+        Err(why) => {
+            println!("Open file failed : {:?}", why.kind());
+            Err(why)
+        },
         Ok(mut file) => {
             let mut content: String = String::new();
             file.read_to_string(&mut content)?;
             match serde_json::from_str::<Books>(&mut content) {
-                Err(why) => println!("Parsing file json failed : {:?}", why),
+                Err(why) => {
+                    println!("Parsing file json failed : {:?}", why);
+                    let v: Value = serde_json::from_str(&mut content)?;
+                    println!(">>>>>>>>>>>>>>> File details: {} {} {}", v["id"], v["name"], v["version"]);
+                    
+                    match v["version"].as_str() {
+                        Some("0.0.4") => {
+                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], "current");
+                            return load_previous_version(content)
+                        },
+                        _ => return Err(io::Error::new(io::ErrorKind::InvalidData, why)),
+                    }
+                },
                 Ok(books) => {
                     return Ok(books)
                 }
@@ -21,9 +38,15 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
         }
     }
 
-    // There was no file, or the file failed to load, create new Books.
-    Ok(Books::build_empty("My Books"))
 }
+
+fn load_previous_version(mut content: String) -> Result<Books, io::Error> {
+    match serde_json::from_str::<BooksV004>(&mut content) {
+        Ok(books) => Ok(books.into()),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+    }
+}
+
 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let _ =::serde_json::to_writer(&File::create(path)?, &books)?;
@@ -52,13 +75,13 @@ pub fn new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksErr
 #[cfg(test)]
 
 mod tests {
-    use std::fs::File;
+    use std::{fs::File};
     use std::io::prelude::*;
     use rust_decimal::Decimal;
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::{Account, Transaction, Side, TransactionStatus, Schedule, ScheduleEnum, Entry, AccountType, ScheduleEntry}, book_repo::save_books};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -100,9 +123,21 @@ mod tests {
                     entry_type: Side::Credit,
                     schedule_id: s_id_1,
                 }
-            ]
+            ],
+            schedule_modifiers: vec![]
         };
         let _ = books.add_schedule(st);
+        let m = Modifier {
+            id: Uuid::new_v4(),
+            name: "Inflation modifier".to_string(),
+            period: ScheduleEnum::Years,
+            frequency: 1,
+            start_date: NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            end_date: None,
+            amount: Decimal::ZERO,
+            percentage: Decimal::new(3, 2),
+        };
+        let _ = books.add_modifier(m);
         books
    }
 
@@ -147,5 +182,26 @@ mod tests {
 
         let result = load_books(filepath);
         assert_eq!(books.accounts().len(), result.unwrap().accounts().len());
+    }
+
+    #[test]
+   fn test_load_books_v0_0_4() {
+        let filepath = "src/previous_versions/books_v0.0.4.json";
+
+        let result = load_books(filepath);
+        let books = result.unwrap();
+        assert_eq!(2, books.accounts().len());
+        assert_eq!(1, books.schedules().len());
+        assert_eq!(2, books.transactions().len());
+        assert_eq!(0, books.modifiers().len());
+        
+    }
+
+    #[test]
+    fn test_load_books_missing_version() {
+        let filepath = "src/previous_versions/books_no_version.json";
+        let result = load_books(filepath);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("missing field"));
     }
 }
