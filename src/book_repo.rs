@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use std::{path::Path, fs::File, io::Read};
-use std::{io};
+use std::{fs, io};
 use serde_json::Value;
 
 use crate::books::{Books, BooksError};
@@ -53,20 +53,34 @@ pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     Ok(())
 }
 
-pub fn new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksError>{
+pub fn file_exists<P: AsRef<Path>>(path: P) -> bool {
+    Path::new(path.as_ref()).exists()
+}
+
+pub fn delete_file<P: AsRef<Path>>(path: P) -> Result<(), BooksError> {
+    match fs::remove_file(&path) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(BooksError{ error: format!("Error while deleting file: {:?} error: {:?}", path.as_ref(), e) })
+    }
+}
+
+pub fn save_new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksError>{
     let file_result = &File::options()
             .write(true)
             .create_new(true)
-            .open(path);
+            .open(&path);
 
     match file_result {
         Ok(file) => {
             _ = ::serde_json::to_writer(file, &books);
             Ok(())
         },
-        Err(e) => match e.kind() {
+        Err(e) => {
+            println!("Error creating file. Path: {:?} Error: {:?}", path.as_ref(), e);
+            match e.kind() {            
             io::ErrorKind::AlreadyExists => Err(BooksError::from_str("A file using this name already exists")),
             _ => Err(BooksError{ error: format!("Error while creating file: {:?}", e) })
+            }
         }
     }
 
