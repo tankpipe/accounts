@@ -24,11 +24,10 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
                     println!(">>>>>>>>>>>>>>> File details: {} {} {}", v["id"], v["name"], v["version"]);
                     
                     match v["version"].as_str() {
-                        Some("0.0.4") => {
+                        _ => {
                             println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], "current");
                             return load_previous_version(content)
                         },
-                        _ => return Err(io::Error::new(io::ErrorKind::InvalidData, why)),
                     }
                 },
                 Ok(books) => {
