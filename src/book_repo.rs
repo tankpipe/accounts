@@ -28,6 +28,7 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
                             println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], "current");
                             return load_previous_version(content)
                         },
+
                     }
                 },
                 Ok(books) => {
