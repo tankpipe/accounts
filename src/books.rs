@@ -1,16 +1,40 @@
 use std::{collections::HashMap, cmp::Ordering};
-use chrono::{NaiveDate};
-use serde::{Serialize, Deserialize};
+use chrono::NaiveDate;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Entry, Transaction, TransactionStatus}, scheduler::Scheduler};
-use crate::schedule::{Schedule, Modifier};
+use crate::account::{Account, Entry, Transaction, TransactionStatus};
+use crate::schedule::{Modifier, Schedule};
+use crate::scheduler::Scheduler;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq  )]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub require_double_entry: bool,
+}
+
+/// Result of matching a transaction during reconciliation.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum ReconciliationMatchStatus {
+    /// Transaction was matched to an existing transaction in the books.
+    Matched { transaction_id: Uuid },
+    /// Two of date, amount, and description matched an existing transaction.
+    PartialMatch { transaction_id: Uuid },
+    /// No matching transaction was found in the books.
+    Unmatched,
+}
+
+/// Result for a single transaction in a reconciliation.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ReconciliationResult {
+    /// The transaction that was checked.
+    pub transaction: Transaction,
+    /// Whether it matched an existing transaction.
+    pub status: ReconciliationMatchStatus,
+    /// The calculated balance for the account after this transaction (when reconciling by account).
+    pub balance_after: Option<Decimal>,
 }
 
 /// Book of accounts a.k.a The Books.
@@ -362,6 +386,98 @@ impl Books {
         new_last
     }
 
+    /// Reconcile a list of transactions against the books for a given account.
+    pub fn reconcile(
+        &self,
+        account_id: Uuid,
+        transactions: Vec<Transaction>,
+    ) -> Result<Vec<ReconciliationResult>, BooksError> {
+        let account = self
+            .accounts
+            .get(&account_id)
+            .ok_or_else(|| BooksError::from_str(format!("Account not found for id {}", account_id).as_str()))?;
+
+        let mut input_txns: Vec<Transaction> = transactions
+            .into_iter()
+            .filter(|t| t.involves_account(&account_id))
+            .collect();
+        input_txns.sort_by(|a, b| {
+            a.find_entry_by_account(&account_id)
+                .unwrap()
+                .date
+                .cmp(&b.find_entry_by_account(&account_id).unwrap().date)
+        });
+
+        let existing_txns = self.account_transactions(account_id)?;
+        let mut matched_indices: Vec<usize> = Vec::new();
+
+        let mut balance = account.starting_balance;
+        let mut results = Vec::with_capacity(input_txns.len());
+
+        for input in input_txns.iter() {
+            let entry = input
+                .find_entry_by_account(&account_id)
+                .expect("transaction involves account");
+
+            let amount = entry.amount;
+            let entry_type = entry.entry_type;
+            let date = entry.date;
+            let description = &entry.description;
+
+            if entry_type == account.normal_balance() {
+                balance = balance + amount;
+            } else {
+                balance = balance - amount;
+            }
+
+            let status = existing_txns
+                .iter()
+                .enumerate()
+                .find(|(i, existing)| {
+                    !matched_indices.contains(i)
+                        && existing
+                            .find_entry_by_account(&account_id)
+                            .map(|e| e.date == date && e.amount == amount && e.entry_type == entry_type)
+                            .unwrap_or(false)
+                })
+                .map(|(i, existing)| {
+                    matched_indices.push(i);
+                    ReconciliationMatchStatus::Matched {
+                        transaction_id: existing.id,
+                    }
+                })
+                .or_else(|| {
+                    existing_txns.iter().find_map(|existing| {
+                        existing.find_entry_by_account(&account_id).and_then(|e| {
+                            let date_match = (e.date - date).num_days().abs() <= 1;
+                            let amount_match = e.amount == amount;
+                            let description_match = e.description == *description;
+                            let match_count = [date_match, amount_match, description_match]
+                                .into_iter()
+                                .filter(|&b| b)
+                                .count();
+                            if match_count >= 2 {
+                                Some(ReconciliationMatchStatus::PartialMatch {
+                                    transaction_id: existing.id,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+                .unwrap_or(ReconciliationMatchStatus::Unmatched);
+
+            results.push(ReconciliationResult {
+                transaction: input.clone(),
+                status,
+                balance_after: Some(balance),
+            });
+        }
+
+        Ok(results)
+    }
+
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
         match id {
             Some(k) => return self.accounts.contains_key(&k),
@@ -388,7 +504,8 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::*, books::BooksError};
+    use crate::account::*;
+    use crate::books::{BooksError, ReconciliationMatchStatus};
     use crate::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
 
     use super::Books;
@@ -613,7 +730,145 @@ mod tests {
         assert_eq!(dec!(10000), entry1.balance.unwrap());
     }
 
+    #[test]
+    fn test_reconcile_matched_and_unmatched() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd(2022, 6, 5));
+        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
 
+        // Simulate statement import: same date/amount/accounts as books, but different IDs
+        let statement_t1 = clone_transaction_for_reconcile(&t1);
+        let statement_t2 = clone_transaction_for_reconcile(&t2);
+        // Different date, amount, description -> no match (not even partial)
+        let mut statement_t3_unmatched = build_transaction_with_date(
+            Some(id1),
+            Some(id2),
+            NaiveDate::from_ymd(2022, 7, 15),
+        );
+        for e in &mut statement_t3_unmatched.entries {
+            if e.account_id == id2 {
+                e.amount = dec!(5000);
+                e.description = "unmatched tx".to_string();
+                break;
+            }
+        }
+
+        let to_reconcile = vec![statement_t1, statement_t2, statement_t3_unmatched];
+        let results = books.reconcile(id2, to_reconcile).unwrap();
+
+        assert_eq!(3, results.len());
+
+        // First two should match (t1 and t2 for account id2)
+        assert!(matches!(
+            results[0].status,
+            ReconciliationMatchStatus::Matched { transaction_id } if transaction_id == t1.id
+        ));
+        assert_eq!(results[0].balance_after, Some(dec!(-10000)));
+
+        assert!(matches!(
+            results[1].status,
+            ReconciliationMatchStatus::Matched { transaction_id } if transaction_id == t2.id
+        ));
+        assert_eq!(results[1].balance_after, Some(dec!(-20000)));
+
+        assert!(matches!(results[2].status, ReconciliationMatchStatus::Unmatched));
+        assert_eq!(results[2].balance_after, Some(dec!(-25000))); // -20000 - 5000
+    }
+
+    #[test]
+    fn test_reconcile_balances() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        books.add_transaction(t1.clone()).unwrap();
+
+        let statement_t1 = clone_transaction_for_reconcile(&t1);
+        let results = books.reconcile(id2, vec![statement_t1]).unwrap();
+
+        assert_eq!(1, results.len());
+        assert_eq!(results[0].balance_after, Some(dec!(-10000)));
+    }
+
+    #[test]
+    fn test_reconcile_partial_match() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        books.add_transaction(t1.clone()).unwrap();
+
+        // Same date and description, different amount -> 2 of 3 match = PartialMatch
+        // (Full match requires date+amount+entry_type, so amount difference prevents full match)
+        let mut partial_t1 = clone_transaction_for_reconcile(&t1);
+        for e in &mut partial_t1.entries {
+            if e.account_id == id2 {
+                e.amount = dec!(9999);
+                break;
+            }
+        }
+
+        let results = books.reconcile(id2, vec![partial_t1]).unwrap();
+        assert_eq!(1, results.len());
+        assert!(matches!(
+            results[0].status,
+            ReconciliationMatchStatus::PartialMatch { transaction_id } if transaction_id == t1.id
+        ));
+    }
+
+    #[test]
+    fn test_reconcile_partial_match_date_variance() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        books.add_transaction(t1.clone()).unwrap();
+
+        // One day after book entry, same amount and description -> date within ±1 day, so 2 of 3 = PartialMatch
+        let mut next_day = clone_transaction_for_reconcile(&t1);
+        for e in &mut next_day.entries {
+            if e.account_id == id2 {
+                e.date = NaiveDate::from_ymd(2022, 6, 5);
+                break;
+            }
+        }
+
+        let results = books.reconcile(id2, vec![next_day]).unwrap();
+        assert_eq!(1, results.len());
+        assert!(matches!(
+            results[0].status,
+            ReconciliationMatchStatus::PartialMatch { transaction_id } if transaction_id == t1.id
+        ));
+    }
+
+    #[test]
+    fn test_reconcile_invalid_account() {
+        let (books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let result = books.reconcile(Uuid::new_v4(), vec![t1]);
+        assert!(result.is_err());
+    }
+
+    fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {
+        let new_id = Uuid::new_v4();
+        Transaction {
+            id: new_id,
+            entries: t
+                .entries
+                .iter()
+                .map(|e| Entry {
+                    id: Uuid::new_v4(),
+                    transaction_id: new_id,
+                    date: e.date,
+                    description: e.description.clone(),
+                    account_id: e.account_id,
+                    entry_type: e.entry_type,
+                    amount: e.amount,
+                    balance: None,
+                })
+                .collect(),
+            status: t.status,
+            schedule_id: None,
+        }
+    }
 
     #[test]
     fn test_account_transactions() {
