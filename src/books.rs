@@ -18,23 +18,18 @@ pub struct Settings {
 /// Result of matching a transaction during reconciliation.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum ReconciliationMatchStatus {
-    /// Transaction was matched to an existing transaction in the books.
-    Matched { transaction_id: Uuid },
-    /// Two of date, amount, and description matched an existing transaction.
-    PartialMatch { transaction_id: Uuid },
-    /// No matching transaction was found in the books.
+    Matched,
+    PartialMatch,
     Unmatched,
 }
 
 /// Result for a single transaction in a reconciliation.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReconciliationResult {
-    /// The transaction that was checked.
     pub transaction: Transaction,
-    /// Whether it matched an existing transaction.
     pub status: ReconciliationMatchStatus,
-    /// The calculated balance for the account after this transaction (when reconciling by account).
-    pub balance_after: Option<Decimal>,
+    pub matched_transaction_id: Option<Uuid>,
+    pub balance: Option<Decimal>,
 }
 
 /// Book of accounts a.k.a The Books.
@@ -430,7 +425,7 @@ impl Books {
                 balance = balance - amount;
             }
 
-            let status = existing_txns
+            let (status, matched_id) = existing_txns
                 .iter()
                 .enumerate()
                 .find(|(i, existing)| {
@@ -442,9 +437,7 @@ impl Books {
                 })
                 .map(|(i, existing)| {
                     matched_indices.push(i);
-                    ReconciliationMatchStatus::Matched {
-                        transaction_id: existing.id,
-                    }
+                    (ReconciliationMatchStatus::Matched, Some(existing.id))
                 })
                 .or_else(|| {
                     existing_txns.iter().find_map(|existing| {
@@ -457,21 +450,20 @@ impl Books {
                                 .filter(|&b| b)
                                 .count();
                             if match_count >= 2 {
-                                Some(ReconciliationMatchStatus::PartialMatch {
-                                    transaction_id: existing.id,
-                                })
+                                Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
                             } else {
                                 None
                             }
                         })
                     })
                 })
-                .unwrap_or(ReconciliationMatchStatus::Unmatched);
+                .unwrap_or((ReconciliationMatchStatus::Unmatched, None));
 
             results.push(ReconciliationResult {
                 transaction: input.clone(),
                 status,
-                balance_after: Some(balance),
+                balance: Some(balance),
+                matched_transaction_id: matched_id,
             });
         }
 
@@ -693,7 +685,6 @@ mod tests {
         assert_eq!(dec!(20000), entry2.balance.unwrap());
 
         let entry3 = &a1_entries[2];
-        println!("{:?}", entry3);
         assert_eq!(t4a1e4.id, entry3.id);
         assert_eq!(dec!(10000), entry3.balance.unwrap());
 
@@ -765,18 +756,26 @@ mod tests {
         // First two should match (t1 and t2 for account id2)
         assert!(matches!(
             results[0].status,
-            ReconciliationMatchStatus::Matched { transaction_id } if transaction_id == t1.id
+            ReconciliationMatchStatus::Matched
         ));
-        assert_eq!(results[0].balance_after, Some(dec!(-10000)));
+        assert_eq!(
+            results[0].matched_transaction_id.unwrap(),
+            t1.id
+        );
+        assert_eq!(results[0].balance, Some(dec!(-10000)));
 
         assert!(matches!(
             results[1].status,
-            ReconciliationMatchStatus::Matched { transaction_id } if transaction_id == t2.id
+            ReconciliationMatchStatus::Matched
         ));
-        assert_eq!(results[1].balance_after, Some(dec!(-20000)));
+        assert_eq!(
+            results[1].matched_transaction_id.unwrap(),
+            t2.id
+        );
+        assert_eq!(results[1].balance, Some(dec!(-20000)));
 
         assert!(matches!(results[2].status, ReconciliationMatchStatus::Unmatched));
-        assert_eq!(results[2].balance_after, Some(dec!(-25000))); // -20000 - 5000
+        assert_eq!(results[2].balance, Some(dec!(-25000))); // -20000 - 5000
     }
 
     #[test]
@@ -789,7 +788,7 @@ mod tests {
         let results = books.reconcile(id2, vec![statement_t1]).unwrap();
 
         assert_eq!(1, results.len());
-        assert_eq!(results[0].balance_after, Some(dec!(-10000)));
+        assert_eq!(results[0].balance, Some(dec!(-10000)));
     }
 
     #[test]
@@ -812,8 +811,12 @@ mod tests {
         assert_eq!(1, results.len());
         assert!(matches!(
             results[0].status,
-            ReconciliationMatchStatus::PartialMatch { transaction_id } if transaction_id == t1.id
+            ReconciliationMatchStatus::PartialMatch
         ));
+        assert_eq!(
+            results[0].matched_transaction_id.unwrap(),
+            t1.id
+        );
     }
 
     #[test]
@@ -835,8 +838,12 @@ mod tests {
         assert_eq!(1, results.len());
         assert!(matches!(
             results[0].status,
-            ReconciliationMatchStatus::PartialMatch { transaction_id } if transaction_id == t1.id
+            ReconciliationMatchStatus::PartialMatch
         ));
+        assert_eq!(
+            results[0].matched_transaction_id.unwrap(),
+            t1.id
+        );
     }
 
     #[test]
@@ -899,7 +906,6 @@ mod tests {
         assert_eq!(dec!(20000), entry2.balance.unwrap());
 
         let entry3 = &a1_entries[2].account_entries(id1)[0];
-        println!("{:?}", entry3);
         assert_eq!(t4a1e4.id, entry3.id);
         assert_eq!(dec!(10000), entry3.balance.unwrap());
 
