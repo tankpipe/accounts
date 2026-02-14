@@ -143,12 +143,22 @@ impl AccountType {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ReconciliationInfo {    
+    #[serde(serialize_with = "serialize_naivedate")]
+    #[serde(deserialize_with = "deserialize_naivedate")]
+    pub date: NaiveDate,
+    pub balance: Decimal,
+    pub transaction_id: Uuid,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: Uuid,
     pub name: String,
     pub account_type: AccountType,
     pub balance: Decimal,
     pub starting_balance: Decimal,
+    pub reconciliation_info: Option<ReconciliationInfo>,    
 }
 
 impl Account {
@@ -159,6 +169,7 @@ impl Account {
             account_type,
             balance: dec!(0),
             starting_balance: dec!(0),
+            reconciliation_info: None,
         };
     }
 
