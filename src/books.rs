@@ -730,10 +730,10 @@ mod tests {
     #[test]
     fn test_account_entries() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
-        let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd(2022, 6, 5));
-        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
-        let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd(2022, 7, 2));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd_opt(2022, 7, 1).unwrap());
+        let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd_opt(2022, 7, 2).unwrap());
         let t1a1e1 = &t1.account_entries(id1)[0];
         let t3a1e3 = &t3.account_entries(id1)[0];
         let t4a1e4 = &t4.account_entries(id1)[0];
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn test_account_transactions_same_day_preserves_order() {
         let (mut books, id1, id2) = setup_books();
-        let date = NaiveDate::from_ymd(2022, 6, 4);
+        let date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
         let t1 = build_transaction_with_date(Some(id1), Some(id2), date);
         let t2 = build_transaction_with_date(Some(id1), Some(id2), date);
         let t3 = build_transaction_with_date(Some(id1), Some(id2), date);
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn test_account_transaction() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let t1a1e1 = &t1.account_entries(id1)[0];
         let _t1a2e1 = &t1.account_entries(id2)[0];
         books.add_transaction(t1).unwrap();
@@ -818,9 +818,9 @@ mod tests {
     #[test]
     fn test_reconcile_matched_and_unmatched() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
-        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd(2022, 6, 5));
-        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd_opt(2022, 7, 1).unwrap());
         books.add_transaction(t1.clone()).unwrap();
         books.add_transaction(t2.clone()).unwrap();
         books.add_transaction(t3.clone()).unwrap();
@@ -844,7 +844,7 @@ mod tests {
         let mut statement_t3_unmatched = build_transaction_with_date(
             Some(id1),
             Some(id2),
-            NaiveDate::from_ymd(2022, 7, 15),
+            NaiveDate::from_ymd_opt(2022, 7, 15).unwrap(),
         );
         for e in &mut statement_t3_unmatched.entries {
             if e.account_id == id2 {
@@ -887,7 +887,7 @@ mod tests {
     #[test]
     fn test_reconcile_balances() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         books.add_transaction(t1.clone()).unwrap();
 
         let mut statement_t1 = clone_transaction_for_reconcile(&t1);
@@ -906,14 +906,14 @@ mod tests {
     #[test]
     fn test_reconcile_partial_match() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         books.add_transaction(t1.clone()).unwrap();
 
         // Date within ±1 day + same amount + same balance, but different description -> PartialMatch
         let mut partial_t1 = clone_transaction_for_reconcile(&t1);
         for e in &mut partial_t1.entries {
             if e.account_id == id2 {
-                e.date = NaiveDate::from_ymd(2022, 6, 5);
+                e.date = NaiveDate::from_ymd_opt(2022, 6, 5).unwrap();
                 e.description = "adjusted description".to_string();
                 e.balance = Some(dec!(-10000));
                 break;
@@ -935,14 +935,14 @@ mod tests {
     #[test]
     fn test_reconcile_partial_match_date_variance() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         books.add_transaction(t1.clone()).unwrap();
 
         // One day after book entry, same amount and description -> date within ±1 day, so 2 of 3 = PartialMatch
         let mut next_day = clone_transaction_for_reconcile(&t1);
         for e in &mut next_day.entries {
             if e.account_id == id2 {
-                e.date = NaiveDate::from_ymd(2022, 6, 5);
+                e.date = NaiveDate::from_ymd_opt(2022, 6, 5).unwrap();
                 e.balance = Some(dec!(-10000));
                 break;
             }
@@ -963,7 +963,7 @@ mod tests {
     #[test]
     fn test_reconcile_mismatch_balance() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         books.add_transaction(t1.clone()).unwrap();
 
         let mut statement_t1 = clone_transaction_for_reconcile(&t1);
@@ -984,8 +984,8 @@ mod tests {
     #[test]
     fn test_reconcile_mismatch_promoted_when_balances_realign() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
-        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd(2022, 6, 5));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
         books.add_transaction(t1.clone()).unwrap();
         books.add_transaction(t2.clone()).unwrap();
 
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn test_reconcile_invalid_account() {
         let (books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let result = books.reconcile(Uuid::new_v4(), vec![t1]);
         assert!(result.is_err());
     }
@@ -1047,10 +1047,10 @@ mod tests {
     #[test]
     fn test_account_transactions() {
         let (mut books, id1, id2) = setup_books();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
-        let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd(2022, 6, 5));
-        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd(2022, 7, 1));
-        let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd(2022, 7, 2));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(None, Some(id2),NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        let t3 = build_transaction_with_date(Some(id1), None, NaiveDate::from_ymd_opt(2022, 7, 1).unwrap());
+        let t4 = build_transaction_with_date(Some(id2), Some(id1), NaiveDate::from_ymd_opt(2022, 7, 2).unwrap());
         let t1a1e1 = &t1.account_entries(id1)[0];
         let t3a1e3 = &t3.account_entries(id1)[0];
         let t4a1e4 = &t4.account_entries(id1)[0];
@@ -1097,7 +1097,7 @@ mod tests {
     #[test]
     fn test_add_schedule() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
         assert!(matches!(expected, _result));
@@ -1107,7 +1107,7 @@ mod tests {
     #[test]
     fn test_update_schedule() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut st1_copy = st1.clone();
         let _result = books.add_schedule(st1);
 
@@ -1120,7 +1120,7 @@ mod tests {
     #[test]
     fn test_delete_schedule() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let st1_id = st1.id;
         books.add_schedule(st1).unwrap();
         assert_eq!(1, books.schedules().len());
@@ -1133,12 +1133,12 @@ mod tests {
     #[test]
     fn test_cannot_delete_schedule_with_transactions() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let st1_id = st1.id;
         books.add_schedule(st1).unwrap();
 
         // Generate transactions from the schedule
-        books.generate(NaiveDate::from_ymd(2023, 6, 4));
+        books.generate(NaiveDate::from_ymd_opt(2023, 6, 4).unwrap());
         
         // Verify transactions were created with schedule_id
         assert!(books.transactions().len() > 0);
@@ -1156,7 +1156,7 @@ mod tests {
     #[test]
     fn test_cannot_delete_schedule_with_invalid_id() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         books.add_schedule(st1).unwrap();
         
         let invalid_id = Uuid::new_v4();
@@ -1172,7 +1172,7 @@ mod tests {
     #[test]
     fn test_add_schedule_invalid_dr_account() {
         let (mut books, id1, id2) = setup_books();
-        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Ok(());
         assert!(matches!(expected, _result));
@@ -1182,7 +1182,7 @@ mod tests {
     #[test]
     fn test_add_schedule_invalid_cr_account() {
         let (mut books, id1, _) = setup_books();
-        let st1 = build_schedule_std(id1, Uuid::new_v4(), NaiveDate::from_ymd(2022, 6, 4));
+        let st1 = build_schedule_std(id1, Uuid::new_v4(), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let _result = books.add_schedule(st1);
         let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
         assert!(matches!(expected, _result));
@@ -1193,15 +1193,15 @@ mod tests {
     fn test_generate() {
         let (mut books, id1, id2) = setup_books();
         let _result = books.add_schedule(
-            build_schedule(id1, id2, NaiveDate::from_ymd(2022, 3, 11), "S_1", "st test 1", dec!(100.99), 3, ScheduleEnum::Months)
+            build_schedule(id1, id2, NaiveDate::from_ymd_opt(2022, 3, 11).unwrap(), "S_1", "st test 1", dec!(100.99), 3, ScheduleEnum::Months)
         );
 
         let _result = books.add_schedule(
-            build_schedule(id2, id1, NaiveDate::from_ymd(2022, 3, 11), "S_2", "st test 2", dec!(20.23), 45, ScheduleEnum::Days)
+            build_schedule(id2, id1, NaiveDate::from_ymd_opt(2022, 3, 11).unwrap(), "S_2", "st test 2", dec!(20.23), 45, ScheduleEnum::Days)
         );
 
         assert_eq!(0, books.transactions.len());
-        books.generate(NaiveDate::from_ymd(2023, 3, 11));
+        books.generate(NaiveDate::from_ymd_opt(2023, 3, 11).unwrap());
 
         assert_eq!(14, books.transactions.len());
         assert_eq!("st test 2", books.transactions[2].entries[0].description);
@@ -1220,7 +1220,7 @@ mod tests {
     }
 
     fn build_transaction(id1: Option<Uuid>, id2: Option<Uuid>) -> Transaction {
-        build_transaction_with_date(id1, id2, NaiveDate::from_ymd(2022, 6, 4))
+        build_transaction_with_date(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap())
     }
 
     fn build_transaction_with_date(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate) -> Transaction {
@@ -1283,22 +1283,22 @@ mod tests {
     #[test]
     fn test_reset_schedule_last_date_with_transactions() {
         let (mut books, id1, id2) = setup_books();
-        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let schedule_id = schedule.id;
         
         // Add the schedule
         books.add_schedule(schedule).unwrap();
         
         // Create some transactions for this schedule
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut t1_with_schedule = t1;
         t1_with_schedule.schedule_id = Some(schedule_id);
         
-        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 7, 4));
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 7, 4).unwrap());
         let mut t2_with_schedule = t2;
         t2_with_schedule.schedule_id = Some(schedule_id);
         
-        let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 8, 4));
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 8, 4).unwrap());
         let mut t3_with_schedule = t3;
         t3_with_schedule.schedule_id = Some(schedule_id);
         
@@ -1312,17 +1312,17 @@ mod tests {
         
         // Should return the date of the latest transaction (August 4, 2022)
         // Now that transactions are sorted by date, it should find August 4th regardless of addition order
-        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 8, 4)));
+        assert_eq!(result, Some(NaiveDate::from_ymd_opt(2022, 8, 4).unwrap()));
         
         // Verify the schedule was updated
         let updated_schedule = books.get_schedule(schedule_id).unwrap();
-        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd(2022, 8, 4)));
+        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd_opt(2022, 8, 4).unwrap()));
     }
 
     #[test]
     fn test_reset_schedule_last_date_no_transactions() {
         let (mut books, id1, id2) = setup_books();
-        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let schedule_id = schedule.id;
         
         // Add the schedule but no transactions
@@ -1342,10 +1342,10 @@ mod tests {
     #[test]
     fn test_reset_schedule_last_date_transactions_for_other_schedules() {
         let (mut books, id1, id2) = setup_books();
-        let schedule1 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let schedule1_id = schedule1.id;
         
-        let schedule2 = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule2 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let schedule2_id = schedule2.id;
         
         // Add both schedules
@@ -1353,12 +1353,12 @@ mod tests {
         books.add_schedule(schedule2).unwrap();
         
         // Create transactions for schedule1
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut t1_with_schedule = t1;
         t1_with_schedule.schedule_id = Some(schedule1_id);
         
         // Create transactions for schedule2 (later date)
-        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 8, 4));
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 8, 4).unwrap());
         let mut t2_with_schedule = t2;
         t2_with_schedule.schedule_id = Some(schedule2_id);
         
@@ -1370,11 +1370,11 @@ mod tests {
         let result = books.reset_schedule_last_date(schedule1_id);
         
         // Should return the date of schedule1's last transaction (June 4, 2022)
-        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        assert_eq!(result, Some(NaiveDate::from_ymd_opt(2022, 6, 4).unwrap()));
         
         // Verify schedule1 was updated correctly
         let updated_schedule1 = books.get_schedule(schedule1_id).unwrap();
-        assert_eq!(updated_schedule1.last_date, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        assert_eq!(updated_schedule1.last_date, Some(NaiveDate::from_ymd_opt(2022, 6, 4).unwrap()));
         
         // Verify schedule2 was not affected
         let updated_schedule2 = books.get_schedule(schedule2_id).unwrap();
@@ -1394,16 +1394,16 @@ mod tests {
     #[test]
     fn test_reset_schedule_last_date_with_existing_last_date() {
         let (mut books, id1, id2) = setup_books();
-        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd(2022, 6, 4));
+        let schedule = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let schedule_id = schedule.id;
         
         // Add the schedule with an existing last_date
         let mut schedule_with_last_date = schedule;
-        schedule_with_last_date.last_date = Some(NaiveDate::from_ymd(2022, 5, 4));
+        schedule_with_last_date.last_date = Some(NaiveDate::from_ymd_opt(2022, 5, 4).unwrap());
         books.add_schedule(schedule_with_last_date).unwrap();
         
         // Create a transaction after the existing last_date
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut t1_with_schedule = t1;
         t1_with_schedule.schedule_id = Some(schedule_id);
         
@@ -1413,11 +1413,11 @@ mod tests {
         let result = books.reset_schedule_last_date(schedule_id);
         
         // Should return the date of the last transaction (June 4, 2022), overwriting the old date
-        assert_eq!(result, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        assert_eq!(result, Some(NaiveDate::from_ymd_opt(2022, 6, 4).unwrap()));
         
         // Verify the schedule was updated with the new date
         let updated_schedule = books.get_schedule(schedule_id).unwrap();
-        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd(2022, 6, 4)));
+        assert_eq!(updated_schedule.last_date, Some(NaiveDate::from_ymd_opt(2022, 6, 4).unwrap()));
     }
 
 }

@@ -198,7 +198,7 @@ mod tests {
     fn test_update_entry_balance() {
         let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
         let transaction_id = Uuid::new_v4();
-        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
         let mut entry = build_entry(
             transaction_id,
             date,
@@ -223,7 +223,7 @@ mod tests {
         let transaction_id = Uuid::new_v4();
         let mut entry = build_entry(
             transaction_id,
-            NaiveDate::from_ymd(2023, 2, 14),
+            NaiveDate::from_ymd_opt(2023, 2, 14).unwrap(),
             "loan payment",
             account1.id,
             Side::Credit,
@@ -237,7 +237,7 @@ mod tests {
         let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
         let account2 = Account::create_new("Loan 1", super::AccountType::Liability);
         let transaction_id = Uuid::new_v4();
-        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
         let mut t = Transaction {
             id: transaction_id,
             entries: [].to_vec(),

@@ -176,32 +176,32 @@ mod tests {
     
     #[test]
     fn test_daily() {
-        test_get_next(ScheduleEnum::Days, 3, NaiveDate::from_ymd(2022, 3, 14))
+        test_get_next(ScheduleEnum::Days, 3, NaiveDate::from_ymd_opt(2022, 3, 14).unwrap())
     }
 
     #[test]
     fn test_weekly() {
-        test_get_next(ScheduleEnum::Weeks, 3, NaiveDate::from_ymd(2022, 4, 1))
+        test_get_next(ScheduleEnum::Weeks, 3, NaiveDate::from_ymd_opt(2022, 4, 1).unwrap())
     }
 
     #[test]
     fn test_monthly() {
-        test_get_next(ScheduleEnum::Months, 3, NaiveDate::from_ymd(2022, 6, 11))
+        test_get_next(ScheduleEnum::Months, 3, NaiveDate::from_ymd_opt(2022, 6, 11).unwrap())
     }
 
     #[test]
     fn test_ambiguous_monthly() {
         let period = ScheduleEnum::Months;
         let frequency = 1;
-        let expected_date = NaiveDate::from_ymd(2023, 3, 31);
+        let expected_date = NaiveDate::from_ymd_opt(2023, 3, 31).unwrap();
         let s = Schedule {
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
             period,
             frequency,
-            start_date: NaiveDate::from_ymd(2023, 1, 31),
+            start_date: NaiveDate::from_ymd_opt(2023, 1, 31).unwrap(),
             end_date: None,
-            last_date: Some(NaiveDate::from_ymd(2023, 2, 28)),
+            last_date: Some(NaiveDate::from_ymd_opt(2023, 2, 28).unwrap()),
             entries: Vec::new(),
             schedule_modifiers: Vec::new(),
         };
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_yearly() {
-        test_get_next(ScheduleEnum::Years, 1, NaiveDate::from_ymd(2023, 3, 11))
+        test_get_next(ScheduleEnum::Years, 1, NaiveDate::from_ymd_opt(2023, 3, 11).unwrap())
     }
 
     fn build_schedule(
@@ -228,9 +228,9 @@ mod tests {
             name: "ST 1".to_string(),
             period,
             frequency,
-            start_date: NaiveDate::from_ymd(2022, 3, 11),
+            start_date: NaiveDate::from_ymd_opt(2022, 3, 11).unwrap(),
             end_date: None,
-            last_date: Some(NaiveDate::from_ymd(2022, 3, 11)),
+            last_date: Some(NaiveDate::from_ymd_opt(2022, 3, 11).unwrap()),
             entries: Vec::new(),
             schedule_modifiers,
         };
@@ -271,7 +271,7 @@ mod tests {
             cycle_count: 0,
         };
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2022, 1, 11), modifier);
+        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd_opt(2022, 1, 11).unwrap(), modifier);
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
@@ -280,7 +280,7 @@ mod tests {
         let (mut modifier,  schedule_modifier) = build_schedule_modifier(0, dec!(0), dec!(0));
         modifier.period = ScheduleEnum::Years;
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd(2023, 1, 1), modifier);
+        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), modifier);
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
@@ -292,61 +292,61 @@ mod tests {
     // Direct tests for calculate_next_date via test-only wrapper
     #[test]
     fn test_calculate_next_date_days() {
-        let prev = NaiveDate::from_ymd(2022, 3, 10);
-        let start = NaiveDate::from_ymd(2022, 3, 1);
+        let prev = NaiveDate::from_ymd_opt(2022, 3, 10).unwrap();
+        let start = NaiveDate::from_ymd_opt(2022, 3, 1).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Days, 5, start);
-        assert_eq!(NaiveDate::from_ymd(2022, 3, 15), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2022, 3, 15).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_weeks() {
-        let prev = NaiveDate::from_ymd(2022, 3, 10);
-        let start = NaiveDate::from_ymd(2022, 3, 1);
+        let prev = NaiveDate::from_ymd_opt(2022, 3, 10).unwrap();
+        let start = NaiveDate::from_ymd_opt(2022, 3, 1).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Weeks, 2, start);
-        assert_eq!(NaiveDate::from_ymd(2022, 3, 24), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2022, 3, 24).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_months_regular_day() {
-        let prev = NaiveDate::from_ymd(2022, 1, 15);
-        let start = NaiveDate::from_ymd(2022, 1, 15);
+        let prev = NaiveDate::from_ymd_opt(2022, 1, 15).unwrap();
+        let start = NaiveDate::from_ymd_opt(2022, 1, 15).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
-        assert_eq!(NaiveDate::from_ymd(2022, 2, 15), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2022, 2, 15).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_months_eom_from_jan_31() {
-        let prev = NaiveDate::from_ymd(2022, 1, 31);
-        let start = NaiveDate::from_ymd(2022, 1, 31);
+        let prev = NaiveDate::from_ymd_opt(2022, 1, 31).unwrap();
+        let start = NaiveDate::from_ymd_opt(2022, 1, 31).unwrap();
         // Jan 31 + 1 month => Feb 28 (non-leap year)
         let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
-        assert_eq!(NaiveDate::from_ymd(2022, 2, 28), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2022, 2, 28).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_months_eom_chain_to_31st() {
         // From Feb 28 with start day 31, monthly should roll to Mar 31
-        let prev = NaiveDate::from_ymd(2023, 2, 28);
-        let start = NaiveDate::from_ymd(2023, 1, 31);
+        let prev = NaiveDate::from_ymd_opt(2023, 2, 28).unwrap();
+        let start = NaiveDate::from_ymd_opt(2023, 1, 31).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Months, 1, start);
-        assert_eq!(NaiveDate::from_ymd(2023, 3, 31), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2023, 3, 31).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_years_regular() {
-        let prev = NaiveDate::from_ymd(2020, 6, 15);
-        let start = NaiveDate::from_ymd(2020, 6, 15);
+        let prev = NaiveDate::from_ymd_opt(2020, 6, 15).unwrap();
+        let start = NaiveDate::from_ymd_opt(2020, 6, 15).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Years, 1, start);
-        assert_eq!(NaiveDate::from_ymd(2021, 6, 15), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2021, 6, 15).unwrap(), next);
     }
 
     #[test]
     fn test_calculate_next_date_years_from_feb_29() {
         // Leap day + 1 year => Feb 28 of non-leap year
-        let prev = NaiveDate::from_ymd(2020, 2, 29);
-        let start = NaiveDate::from_ymd(2020, 2, 29);
+        let prev = NaiveDate::from_ymd_opt(2020, 2, 29).unwrap();
+        let start = NaiveDate::from_ymd_opt(2020, 2, 29).unwrap();
         let next = calculate_next_date(prev, ScheduleEnum::Years, 1, start);
-        assert_eq!(NaiveDate::from_ymd(2021, 2, 28), next);
+        assert_eq!(NaiveDate::from_ymd_opt(2021, 2, 28).unwrap(), next);
     }
 
     // Modifier.apply tests
@@ -415,7 +415,7 @@ mod tests {
             name: "m".into(),
             period: ScheduleEnum::Months,
             frequency: 1,
-            start_date: NaiveDate::from_ymd(2022, 1, 1),
+            start_date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
             end_date: None,
             amount,
             percentage,
