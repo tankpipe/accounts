@@ -231,15 +231,18 @@ impl Books {
             return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
         }
 
-        let mut account_transactions: Vec<Transaction> =
+        let account_transactions: Vec<(usize, Transaction)> =
             self.transactions
                 .iter()
-                .filter(|t|t.involves_account(&account_id))
-                .map(|t| t.clone())
+                .filter(|t| t.involves_account(&account_id))
+                .enumerate()
+                .map(|(idx, t)| (idx, t.clone()))
                 .collect();
+        
+        let mut account_transactions: Vec<Transaction> =
+            account_transactions.into_iter().map(|(_, t)| t).collect();
 
-        account_transactions.sort_by(
-            |a, b| a.find_entry_by_account(&account_id).unwrap().date.cmp(&b.find_entry_by_account(&account_id).unwrap().date));
+        sort_transactions_by_account(&mut account_transactions, account_id, TransactionSortOrder::OldestFirst);        
         let account = self.accounts.get(&account_id).unwrap();
         let mut balance = account.starting_balance;
 
@@ -388,21 +391,25 @@ impl Books {
         account_id: Uuid,
         transactions: Vec<Transaction>,
     ) -> Result<Vec<ReconciliationResult>, BooksError> {
-        let account = self
-            .accounts
-            .get(&account_id)
-            .ok_or_else(|| BooksError::from_str(format!("Account not found for id {}", account_id).as_str()))?;
-
-        let mut input_txns: Vec<Transaction> = transactions
+        let mut input_txns: Vec<(usize, Transaction)> = transactions
             .into_iter()
             .filter(|t| t.involves_account(&account_id))
-            .collect();
-        input_txns.sort_by(|a, b| {
-            a.find_entry_by_account(&account_id)
+            .enumerate()
+            .collect();           
+
+            input_txns.sort_by(|(a_idx, a), (b_idx, b)| {
+            let date_cmp = a
+                .find_entry_by_account(&account_id)
                 .unwrap()
                 .date
-                .cmp(&b.find_entry_by_account(&account_id).unwrap().date)
+                .cmp(&b.find_entry_by_account(&account_id).unwrap().date);
+            if date_cmp == std::cmp::Ordering::Equal {
+                a_idx.cmp(b_idx)
+            } else {
+                date_cmp
+            }
         });
+        let input_txns: Vec<Transaction> = input_txns.into_iter().map(|(_, t)| t).collect();
 
         let existing_txns = self.account_transactions(account_id)?;
         let mut matched_indices: Vec<usize> = Vec::new();
@@ -503,6 +510,43 @@ impl Books {
             None => return true
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionSortOrder {
+    OldestFirst,
+    NewestFirst,
+}
+
+/// Sort imported transactions by account entry date while preserving original order for same-day items.
+pub fn sort_transactions_by_account(
+    transactions: &mut Vec<Transaction>,
+    account_id: Uuid,
+    order: TransactionSortOrder,
+) {
+    let mut indexed: Vec<(usize, Transaction)> = transactions.drain(..).enumerate().collect();
+    indexed.sort_by(|(a_idx, a_txn), (b_idx, b_txn)| {
+        let a_date = a_txn.find_entry_by_account(&account_id).map(|e| e.date);
+        let b_date = b_txn.find_entry_by_account(&account_id).map(|e| e.date);
+
+        let date_cmp = match (a_date, b_date) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            _ => std::cmp::Ordering::Equal,
+        };
+
+        let date_cmp = match order {
+            TransactionSortOrder::OldestFirst => date_cmp,
+            TransactionSortOrder::NewestFirst => date_cmp.reverse(),
+        };
+
+        if date_cmp == std::cmp::Ordering::Equal {
+            a_idx.cmp(b_idx)
+        } else {
+            date_cmp
+        }
+    });
+
+    *transactions = indexed.into_iter().map(|(_, txn)| txn).collect();
 }
 
 #[derive(Debug)]
@@ -731,6 +775,29 @@ mod tests {
         assert_eq!(dec!(-10000), entry23.balance.unwrap());
 
 
+    }
+
+    #[test]
+    fn test_account_transactions_same_day_preserves_order() {
+        let (mut books, id1, id2) = setup_books();
+        let date = NaiveDate::from_ymd(2022, 6, 4);
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), date);
+
+        let t1_id = t1.id;
+        let t2_id = t2.id;
+        let t3_id = t3.id;
+
+        books.add_transaction(t1).unwrap();
+        books.add_transaction(t2).unwrap();
+        books.add_transaction(t3).unwrap();
+
+        let a2_transactions = books.account_transactions(id2).unwrap();
+        assert_eq!(3, a2_transactions.len());
+        assert_eq!(t1_id, a2_transactions[0].id);
+        assert_eq!(t2_id, a2_transactions[1].id);
+        assert_eq!(t3_id, a2_transactions[2].id);
     }
 
     #[test]

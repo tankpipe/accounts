@@ -4,7 +4,9 @@ use std::{fs, io};
 use serde_json::Value;
 
 use crate::books::{Books, BooksError};
+use crate::account::Transaction;
 use crate::books_prev_versions::BooksV004;
+use uuid::Uuid;
 
 /// Simple JSON file storage for Books.
 
@@ -41,6 +43,43 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
         }
     }
 
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionSortOrder {
+    OldestFirst,
+    NewestFirst,
+}
+
+/// Sort imported transactions by account entry date while preserving original order for same-day items.
+pub fn sort_transactions_for_account(
+    transactions: &mut Vec<Transaction>,
+    account_id: Uuid,
+    order: TransactionSortOrder,
+) {
+    let mut indexed: Vec<(usize, Transaction)> = transactions.drain(..).enumerate().collect();
+    indexed.sort_by(|(a_idx, a_txn), (b_idx, b_txn)| {
+        let a_date = a_txn.find_entry_by_account(&account_id).map(|e| e.date);
+        let b_date = b_txn.find_entry_by_account(&account_id).map(|e| e.date);
+
+        let date_cmp = match (a_date, b_date) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            _ => std::cmp::Ordering::Equal,
+        };
+
+        let date_cmp = match order {
+            TransactionSortOrder::OldestFirst => date_cmp,
+            TransactionSortOrder::NewestFirst => date_cmp.reverse(),
+        };
+
+        if date_cmp == std::cmp::Ordering::Equal {
+            a_idx.cmp(b_idx)
+        } else {
+            date_cmp
+        }
+    });
+
+    *transactions = indexed.into_iter().map(|(_, txn)| txn).collect();
 }
 
 fn load_previous_version(mut content: String) -> Result<Books, io::Error> {
@@ -109,11 +148,11 @@ mod tests {
         let cr_account1 = Account::create_new("Credit Account 1", AccountType::Liability);
         let id2: Uuid = cr_account1.id;
         books.add_account(cr_account1);
-        let date = NaiveDate::from_ymd(2022, 6, 4);
+        let date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
         let t1 = build_transaction(id1, id2, "received moneys", date, dec!(10000));
         books.add_transaction(t1).unwrap();
 
-        let t2_date = NaiveDate::from_ymd(2022, 6, 5);
+        let t2_date = NaiveDate::from_ymd_opt(2022, 6, 5).unwrap();
         let t2 = build_transaction(id2, id1, "Gave some moneys back", t2_date, dec!(98.99));
         books.add_transaction(t2).unwrap();
         let s_id_1 = Uuid::new_v4();
@@ -122,9 +161,9 @@ mod tests {
             name: "Some income".to_string(),
             period: ScheduleEnum::Months,
             frequency: 1,
-            start_date: NaiveDate::from_ymd(2022, 6, 4),
+            start_date: NaiveDate::from_ymd_opt(2022, 6, 4).unwrap(),
             end_date: None,
-            last_date: Some(NaiveDate::from_ymd(2022, 6, 4)),
+            last_date: Some(NaiveDate::from_ymd_opt(2022, 6, 4).unwrap()),
             entries: vec![
                 ScheduleEntry {
                     amount: dec!(200),
