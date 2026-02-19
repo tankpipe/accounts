@@ -424,6 +424,7 @@ impl Books {
             } else {
                 balance = balance - amount;
             }
+            let expected_balance = balance;
 
             let (status, matched_id) = existing_txns
                 .iter()
@@ -432,7 +433,12 @@ impl Books {
                     !matched_indices.contains(i)
                         && existing
                             .find_entry_by_account(&account_id)
-                            .map(|e| e.date == date && e.amount == amount && e.entry_type == entry_type)
+                            .map(|e| {
+                                e.date == date
+                                    && e.amount == amount
+                                    && e.entry_type == entry_type
+                                    && e.balance == Some(expected_balance)
+                            })
                             .unwrap_or(false)
                 })
                 .map(|(i, existing)| {
@@ -440,16 +446,21 @@ impl Books {
                     (ReconciliationMatchStatus::Matched, Some(existing.id))
                 })
                 .or_else(|| {
-                    existing_txns.iter().find_map(|existing| {
+                    existing_txns.iter().enumerate().find_map(|(i, existing)| {
+                        if matched_indices.contains(&i) {
+                            return None;
+                        }
                         existing.find_entry_by_account(&account_id).and_then(|e| {
                             let date_match = (e.date - date).num_days().abs() <= 1;
                             let amount_match = e.amount == amount;
                             let description_match = e.description == *description;
-                            let match_count = [date_match, amount_match, description_match]
+                            let balance_match = e.balance == Some(expected_balance);
+                            let match_count = [date_match, amount_match, description_match, balance_match]
                                 .into_iter()
                                 .filter(|&b| b)
                                 .count();
-                            if match_count >= 2 {
+                            if match_count >= 3 {
+                                matched_indices.push(i);
                                 Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
                             } else {
                                 None
@@ -797,12 +808,12 @@ mod tests {
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
         books.add_transaction(t1.clone()).unwrap();
 
-        // Same date and description, different amount -> 2 of 3 match = PartialMatch
-        // (Full match requires date+amount+entry_type, so amount difference prevents full match)
+        // Date within ±1 day + same amount + same balance, but different description -> 3 of 4 = PartialMatch
         let mut partial_t1 = clone_transaction_for_reconcile(&t1);
         for e in &mut partial_t1.entries {
             if e.account_id == id2 {
-                e.amount = dec!(9999);
+                e.date = NaiveDate::from_ymd(2022, 6, 5);
+                e.description = "adjusted description".to_string();
                 break;
             }
         }
