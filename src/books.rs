@@ -20,6 +20,7 @@ pub struct Settings {
 pub enum ReconciliationMatchStatus {
     Matched,
     PartialMatch,
+    Mismatch,
     Unmatched,
 }
 
@@ -455,13 +456,17 @@ impl Books {
                             let amount_match = e.amount == amount;
                             let description_match = e.description == *description;
                             let balance_match = e.balance == Some(expected_balance);
-                            let match_count = [date_match, amount_match, description_match, balance_match]
+                            let other_match_count = [date_match, amount_match, description_match]
                                 .into_iter()
                                 .filter(|&b| b)
                                 .count();
-                            if match_count >= 3 {
+                            if other_match_count >= 2 {
                                 matched_indices.push(i);
-                                Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
+                                if balance_match {
+                                    Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
+                                } else {
+                                    Some((ReconciliationMatchStatus::Mismatch, Some(existing.id)))
+                                }
                             } else {
                                 None
                             }
@@ -476,6 +481,24 @@ impl Books {
                 balance: Some(balance),
                 matched_transaction_id: matched_id,
             });
+        }
+
+        // If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
+        let mut mismatched_indices: Vec<usize> = Vec::new();
+        for i in 0..results.len() {
+            match results[i].status {
+                ReconciliationMatchStatus::Unmatched => {
+                    mismatched_indices.clear();
+                }
+                ReconciliationMatchStatus::Mismatch => {
+                    mismatched_indices.push(i);
+                }
+                ReconciliationMatchStatus::Matched | ReconciliationMatchStatus::PartialMatch => {
+                    for idx in mismatched_indices.drain(..) {
+                        results[idx].status = ReconciliationMatchStatus::PartialMatch;
+                    }
+                }
+            }
         }
 
         Ok(results)
@@ -855,6 +878,63 @@ mod tests {
             results[0].matched_transaction_id.unwrap(),
             t1.id
         );
+    }
+
+    #[test]
+    fn test_reconcile_mismatch_balance() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        books.add_transaction(t1.clone()).unwrap();
+
+        let mut statement_unmatched = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 3));
+        for e in &mut statement_unmatched.entries {
+            if e.account_id == id2 {
+                e.amount = dec!(5000);
+                e.description = "prior txn".to_string();
+                break;
+            }
+        }
+
+        let statement_t1 = clone_transaction_for_reconcile(&t1);
+        let results = books.reconcile(id2, vec![statement_unmatched, statement_t1]).unwrap();
+
+        assert_eq!(2, results.len());
+        assert!(matches!(results[0].status, ReconciliationMatchStatus::Unmatched));
+        assert!(matches!(results[1].status, ReconciliationMatchStatus::Mismatch));
+        assert_eq!(results[1].matched_transaction_id.unwrap(), t1.id);
+    }
+
+    #[test]
+    fn test_reconcile_mismatch_promoted_when_balances_realign() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd(2022, 6, 4));
+        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd(2022, 6, 5));
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+
+        // Adjust statement amounts so the running balance realigns on the second transaction.
+        let mut statement_t1 = clone_transaction_for_reconcile(&t1);
+        for e in &mut statement_t1.entries {
+            if e.account_id == id2 {
+                e.amount = dec!(9000);
+                break;
+            }
+        }
+        let mut statement_t2 = clone_transaction_for_reconcile(&t2);
+        for e in &mut statement_t2.entries {
+            if e.account_id == id2 {
+                e.amount = dec!(11000);
+                break;
+            }
+        }
+
+        let results = books
+            .reconcile(id2, vec![statement_t1, statement_t2])
+            .unwrap();
+
+        assert_eq!(2, results.len());
+        assert!(matches!(results[0].status, ReconciliationMatchStatus::PartialMatch));
+        assert!(matches!(results[1].status, ReconciliationMatchStatus::PartialMatch));
     }
 
     #[test]
