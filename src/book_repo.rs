@@ -138,6 +138,7 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
+    use tempfile::NamedTempFile;
     use super::{Books, load_books};
 
    fn build_books() -> Books {
@@ -216,7 +217,8 @@ mod tests {
    #[test]
    fn test_load_books() {
         let books = build_books();
-        let filepath = "books.json";
+        let tmp_file = NamedTempFile::new().expect("create temp file");
+        let filepath = tmp_file.path();
 
         let _ = save_books(filepath, &books);
 
