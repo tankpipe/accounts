@@ -39,6 +39,10 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    pub fn date(&self) -> Option<NaiveDate> {
+        self.entries.first().map(|e| e.date)
+    }
+
     pub fn account_entries(&self, account_id: Uuid) -> Vec<Entry> {
         self.entries
             .iter()
@@ -302,6 +306,41 @@ mod tests {
                 .balance
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_transaction_date_with_entries() {
+        let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
+        let transaction_id = Uuid::new_v4();
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
+        let t = Transaction {
+            id: transaction_id,
+            entries: vec![build_entry(
+                transaction_id,
+                date,
+                "loan payment",
+                account1.id,
+                Side::Credit,
+                dec!(100),
+            )],
+            status: TransactionStatus::Recorded,
+            schedule_id: None,
+        };
+
+        assert_eq!(Some(date), t.date());
+    }
+
+    #[test]
+    fn test_transaction_date_with_no_entries() {
+        let transaction_id = Uuid::new_v4();
+        let t = Transaction {
+            id: transaction_id,
+            entries: vec![],
+            status: TransactionStatus::Recorded,
+            schedule_id: None,
+        };
+
+        assert!(t.date().is_none());
     }
 
     fn build_entry(
