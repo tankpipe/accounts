@@ -603,6 +603,7 @@ impl Books {
                 for entry in original.entries.iter_mut().filter(|e| e.account_id == account_id) {
                     entry.reconciled = true;
                 }
+                original.status = TransactionStatus::Recorded;
             }
         }
 
