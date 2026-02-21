@@ -117,7 +117,7 @@ pub struct AccountCategory {
     normal_balance: Side,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum AccountType {
     Asset,
     Liability,
@@ -148,7 +148,7 @@ impl AccountType {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReconciliationInfo {    
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
@@ -157,7 +157,7 @@ pub struct ReconciliationInfo {
     pub transaction_id: Uuid,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Account {
     pub id: Uuid,
     pub name: String,

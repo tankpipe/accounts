@@ -47,13 +47,18 @@ pub struct Books {
 
 impl Books {
     pub fn generate(&mut self, end_date: NaiveDate) {
-        self.transactions.append(&mut self.scheduler.generate(end_date));
+        let transactions = self.scheduler.generate(end_date);
+        for transaction in transactions.iter() {
+            let _ = self.add_transaction(transaction.clone());
+        }
         sort_transactions_by_account(&mut self.transactions, None, TransactionSortOrder::OldestFirst);
     }
 
     pub fn generate_by_schedule(&mut self, end_date: NaiveDate, schedule_id: Uuid) -> Vec<Transaction> {
         let transactions = self.scheduler.generate_by_schedule(end_date, schedule_id);
-        self.transactions.append(&mut transactions.clone());
+        for transaction in transactions.iter() {
+            let _ = self.add_transaction(transaction.clone());
+        }
         sort_transactions_by_account(&mut self.transactions, None, TransactionSortOrder::OldestFirst);
         transactions
     }
@@ -186,7 +191,7 @@ impl Books {
             return Some(Err(BooksError::from_str("A transaction can not be modified with reconciled entries")))
         } else if transaction.entries.iter().any(|e| self.accounts.get(&e.account_id).is_some() && 
             self.accounts.get(&e.account_id).unwrap().reconciliation_info.is_some() && 
-            self.accounts.get(&e.account_id).unwrap().reconciliation_info.as_ref().unwrap().date < e.date) 
+            self.accounts.get(&e.account_id).unwrap().reconciliation_info.as_ref().unwrap().date > e.date) 
         {
             return Some(Err(BooksError::from_str("A transaction entry can not be added before an accounts reconciliation date")))
         }
