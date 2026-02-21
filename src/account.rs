@@ -82,6 +82,8 @@ pub struct Entry {
     pub entry_type: Side,
     pub amount: Decimal,
     pub balance: Option<Decimal>,
+    #[serde(default)]
+    pub reconciled: bool,
 }
 
 impl Entry {
@@ -115,7 +117,7 @@ pub struct AccountCategory {
     normal_balance: Side,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum AccountType {
     Asset,
     Liability,
@@ -360,6 +362,7 @@ mod tests {
             entry_type,
             amount: amount,
             balance: None,
+            reconciled: false,
         }
     }
 }

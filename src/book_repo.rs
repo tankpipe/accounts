@@ -205,9 +205,9 @@ mod tests {
                 id: transaction_id,
                 entries: vec![
                     Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,entry_type:Side::Debit,
-                        amount,balance:None },
+                        amount,balance:None, reconciled:false },
                     Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,entry_type:Side::Credit,
-                        amount,balance:None},
+                        amount,balance:None, reconciled:false},
                 ],
                 status: TransactionStatus::Recorded,
                 schedule_id: None

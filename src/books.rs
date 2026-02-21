@@ -82,7 +82,47 @@ impl Books {
     }
 
     pub fn add_account(&mut self, account: Account) {
-        self.accounts.insert (account.id, account);
+        let mut account = account;
+        account.reconciliation_info = None;
+        if ! self.accounts.contains_key(&account.id) {
+            self.accounts.insert(account.id, account);
+        }        
+    }
+
+    pub fn update_account(&mut self, account: Account) -> Result<(), BooksError> {
+        let existing = self
+            .accounts
+            .get(&account.id)
+            .ok_or_else(|| BooksError::from_str(format!("Account {} not found.", account.id).as_str()))?;
+
+        let same_reconciliation = match (&account.reconciliation_info, &existing.reconciliation_info) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                a.date == b.date && a.balance == b.balance && a.transaction_id == b.transaction_id
+            }
+            _ => false,
+        };
+
+        if !same_reconciliation {
+            return Err(BooksError::from_str("Account reconciliation_info can not be modified."));
+        }
+
+        if account.account_type != existing.account_type
+            && self.transactions.iter().any(|t| t.involves_account(&account.id))
+        {
+            return Err(BooksError::from_str("Account type can not be modified once it has transactions."));
+        }
+
+        if account.starting_balance != existing.starting_balance
+            && existing.reconciliation_info.is_some()
+        {
+            return Err(BooksError::from_str(
+                "Account starting balance can not be modified once it has been reconciled.",
+            ));
+        }
+
+        self.accounts.insert(account.id, account);
+        Ok(())
     }
 
     pub fn delete_account(&mut self, id: &Uuid) -> Result<(), BooksError> {
@@ -140,6 +180,15 @@ impl Books {
 
         if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
             return Some(Err(BooksError::from_str("Invalid Account")))
+        }
+
+        if transaction.entries.iter().any(|e| e.reconciled) {
+            return Some(Err(BooksError::from_str("A transaction can not be modified with reconciled entries")))
+        } else if transaction.entries.iter().any(|e| self.accounts.get(&e.account_id).is_some() && 
+            self.accounts.get(&e.account_id).unwrap().reconciliation_info.is_some() && 
+            self.accounts.get(&e.account_id).unwrap().reconciliation_info.as_ref().unwrap().date < e.date) 
+        {
+            return Some(Err(BooksError::from_str("A transaction entry can not be added before an accounts reconciliation date")))
         }
         None
     }
@@ -490,6 +539,76 @@ impl Books {
         Ok(results)
     }
 
+    pub fn reconcile_account(&mut self, account_id: Uuid, transaction_id: Uuid) -> Result<(), BooksError> {
+        if !self.accounts.contains_key(&account_id) {
+            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+        }
+        let account_transactions = self.account_transactions(account_id)?;
+        let cutoff_idx = account_transactions
+            .iter()
+            .position(|t| t.id == transaction_id)
+            .ok_or_else(|| {
+                BooksError::from_str(
+                    format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
+                )
+            })?;
+
+        let cutoff_txn = &account_transactions[cutoff_idx];
+        let cutoff_entry = cutoff_txn
+            .find_entry_by_account(&account_id)
+            .ok_or_else(|| {
+                BooksError::from_str(
+                    format!("Transaction {} does not involve account {}.", transaction_id, account_id).as_str(),
+                )
+            })?;
+
+        if let Some(existing) = self.accounts.get(&account_id).and_then(|a| a.reconciliation_info.clone()) {
+            if cutoff_entry.date < existing.date {
+                return Ok(());
+            }
+            if let Some(existing_idx) = account_transactions.iter().position(|t| t.id == existing.transaction_id) {
+                if cutoff_idx < existing_idx {
+                    return Ok(());
+                }
+            }
+        }
+
+        if let Some(original) = self.transactions.iter().find(|t| t.id == transaction_id) {
+            if let Some(entry) = original.find_entry_by_account(&account_id) {
+                if entry.reconciled {
+                    return Ok(());
+                }
+            }
+        }
+        let cutoff_balance = cutoff_entry.balance.ok_or_else(|| {
+            BooksError::from_str(
+                format!(
+                    "Transaction {} for account {} has no balance.",
+                    transaction_id, account_id
+                )
+                .as_str(),
+            )
+        })?;
+
+        if let Some(account) = self.accounts.get_mut(&account_id) {
+            account.reconciliation_info = Some(crate::account::ReconciliationInfo {
+                date: cutoff_entry.date,
+                balance: cutoff_balance,
+                transaction_id,
+            });
+        }
+
+        for txn in account_transactions.iter().take(cutoff_idx + 1) {
+            if let Some(original) = self.transactions.iter_mut().find(|t| t.id == txn.id) {
+                for entry in original.entries.iter_mut().filter(|e| e.account_id == account_id) {
+                    entry.reconciled = true;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn valid_account_id(&self, id: Option<Uuid>) -> bool {
         match id {
             Some(k) => return self.accounts.contains_key(&k),
@@ -578,12 +697,81 @@ mod tests {
     }
 
     #[test]
+    fn test_add_account_resets_reconciliation_info() {
+        let mut a = Account::create_new("test account", AccountType::Liability);
+        a.reconciliation_info = Some(ReconciliationInfo {
+            date: NaiveDate::from_ymd_opt(2022, 6, 4).unwrap(),
+            balance: dec!(100),
+            transaction_id: Uuid::new_v4(),
+        });
+        let mut b = Books::build_empty("My Books");
+        b.add_account(a);
+
+        let a2 = &b.accounts()[0];
+        assert!(a2.reconciliation_info.is_none());
+    }
+
+    #[test]
     fn test_delete_account(){
         let (mut books, id1, id2) = setup_books();
         let _result = books.delete_account(&id1);
         assert!(matches!((), _result));
         assert!(books.accounts.get(&id1).is_none());
         assert!(books.accounts.get(&id2).is_some());
+    }
+
+    #[test]
+    fn test_update_account_allows_non_reconciliation_changes() {
+        let (mut books, id1, _id2) = setup_books();
+        let mut account = books.accounts.get(&id1).unwrap().clone();
+        account.name = "updated name".to_string();
+
+        let result = books.update_account(account);
+        assert!(result.is_ok());
+
+        let updated = books.accounts.get(&id1).unwrap();
+        assert_eq!("updated name", updated.name);
+    }
+
+    #[test]
+    fn test_update_account_rejects_reconciliation_changes() {
+        let (mut books, id1, _id2) = setup_books();
+        let mut account = books.accounts.get(&id1).unwrap().clone();
+        account.reconciliation_info = Some(ReconciliationInfo {
+            date: NaiveDate::from_ymd_opt(2022, 6, 4).unwrap(),
+            balance: dec!(100),
+            transaction_id: Uuid::new_v4(),
+        });
+
+        let result = books.update_account(account);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_account_rejects_account_type_change_with_transactions() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        books.add_transaction(t1).unwrap();
+
+        let mut account = books.accounts.get(&id1).unwrap().clone();
+        account.account_type = AccountType::Expense;
+
+        let result = books.update_account(account);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_account_rejects_starting_balance_change_when_reconciled() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        books.add_transaction(t1.clone()).unwrap();
+        books.reconcile_account(id1, t1.id).unwrap();
+
+        let mut account = books.accounts.get(&id1).unwrap().clone();
+        account.starting_balance = dec!(500);
+
+        let result = books.update_account(account);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -922,6 +1110,114 @@ mod tests {
     }
 
     #[test]
+    fn test_reconcile_account_sets_info_and_marks_entries() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 6).unwrap());
+
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
+
+        books.reconcile_account(id1, t2.id).unwrap();
+
+        let account = books.accounts.get(&id1).unwrap();
+        let info = account.reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info.transaction_id);
+        assert_eq!(t2.entries[0].date, info.date);
+
+        let t1_entry = books
+            .transactions()
+            .iter()
+            .find(|t| t.id == t1.id)
+            .and_then(|t| t.find_entry_by_account(&id1))
+            .unwrap();
+        let t2_entry = books
+            .transactions()
+            .iter()
+            .find(|t| t.id == t2.id)
+            .and_then(|t| t.find_entry_by_account(&id1))
+            .unwrap();
+        let t3_entry = books
+            .transactions()
+            .iter()
+            .find(|t| t.id == t3.id)
+            .and_then(|t| t.find_entry_by_account(&id1))
+            .unwrap();
+
+        assert!(t1_entry.reconciled);
+        assert!(t2_entry.reconciled);
+        assert!(!t3_entry.reconciled);
+    }
+
+    #[test]
+    fn test_reconcile_account_no_op_when_earlier_or_already_reconciled() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 6).unwrap());
+
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
+
+        books.reconcile_account(id1, t2.id).unwrap();
+        let info = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info.transaction_id);
+
+        books.reconcile_account(id1, t1.id).unwrap();
+        let info_after_earlier = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info_after_earlier.transaction_id);
+
+        books.reconcile_account(id1, t2.id).unwrap();
+        let info_after_reconcile_again = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info_after_reconcile_again.transaction_id);
+    }
+
+    #[test]
+    fn test_reconcile_account_no_op_when_same_day_earlier_in_order() {
+        let (mut books, id1, id2) = setup_books();
+        let date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), date);
+
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
+
+        books.reconcile_account(id1, t2.id).unwrap();
+        let info = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info.transaction_id);
+
+        books.reconcile_account(id1, t1.id).unwrap();
+        let info_after_earlier = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info_after_earlier.transaction_id);
+    }
+
+    #[test]
+    fn test_reconcile_account_advances_when_same_day_later_in_order() {
+        let (mut books, id1, id2) = setup_books();
+        let date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), date);
+        let t3 = build_transaction_with_date(Some(id1), Some(id2), date);
+
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
+
+        books.reconcile_account(id1, t2.id).unwrap();
+        let info = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t2.id, info.transaction_id);
+
+        books.reconcile_account(id1, t3.id).unwrap();
+        let info_after_later = books.accounts.get(&id1).unwrap().reconciliation_info.as_ref().unwrap();
+        assert_eq!(t3.id, info_after_later.transaction_id);
+    }
+
+    #[test]
     fn test_reconcile_balances() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
@@ -1074,6 +1370,7 @@ mod tests {
                     entry_type: e.entry_type,
                     amount: e.amount,
                     balance: None,
+                    reconciled: false,
                 })
                 .collect(),
             status: t.status,
@@ -1273,12 +1570,12 @@ mod tests {
 
         if dr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:dr_account_id.unwrap(),
-                entry_type:Side::Debit, amount,balance:None })
+                entry_type:Side::Debit, amount,balance:None, reconciled:false })
         }
 
         if cr_account_id.is_some() {
             t1.entries.push(Entry{id:Uuid::new_v4(),transaction_id,date,description: description_str.to_string(),account_id:cr_account_id.unwrap(),
-                entry_type:Side::Credit,amount,balance:None })
+                entry_type:Side::Credit,amount,balance:None, reconciled:false })
         }
         t1
     }
