@@ -879,6 +879,42 @@ mod tests {
     }
 
     #[test]
+    fn test_add_transaction_before_reconciliation_date_rejected() {
+        let (mut books, id1, id2) = setup_books();
+        
+        // Add a transaction and reconcile the account
+        let reconciliation_date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), reconciliation_date);
+        books.add_transaction(t1.clone()).unwrap();
+        books.reconcile_account(id1, t1.id).unwrap();
+        
+        // Try to add a transaction before the reconciliation date - should be rejected
+        let early_date = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), early_date);
+        let result = books.add_transaction(t2);
+        assert!(result.is_err());
+        assert_eq!("A transaction entry can not be added before an accounts reconciliation date", result.err().unwrap().error);
+    }
+
+    #[test]
+    fn test_add_transaction_after_reconciliation_date_allowed() {
+        let (mut books, id1, id2) = setup_books();
+        
+        // Add a transaction and reconcile the account
+        let reconciliation_date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), reconciliation_date);
+        books.add_transaction(t1.clone()).unwrap();
+        books.reconcile_account(id1, t1.id).unwrap();
+        
+        // Add a transaction after the reconciliation date - should be allowed
+        let later_date = NaiveDate::from_ymd_opt(2022, 6, 10).unwrap();
+        let t2 = build_transaction_with_date(Some(id1), Some(id2), later_date);
+        let result = books.add_transaction(t2);
+        assert!(result.is_ok());
+        assert_eq!(2, books.transactions.len());
+    }
+
+    #[test]
     fn test_add_transaction_no_account() {
         let (mut books, _id1, _id2) = setup_books();
         let t1 = build_transaction(None, None);
