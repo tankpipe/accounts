@@ -187,9 +187,15 @@ impl Books {
             return Some(Err(BooksError::from_str("Invalid Account")))
         }
 
-        if transaction.entries.iter().any(|e| e.reconciled) {
-            return Some(Err(BooksError::from_str("A transaction can not be modified with reconciled entries")))
-        } else if transaction.entries.iter().any(|e| self.accounts.get(&e.account_id).is_some() && 
+        if let Some(orginal_transaction) = self.transactions.iter().find(|t| t.id == transaction.id) {
+            for (original_entry, entry) in orginal_transaction.entries.iter().zip(transaction.entries.iter()) {
+                if original_entry.reconciled && original_entry != entry {
+                    return Some(Err(BooksError::from_str("A reconciled entry can not be modified")))
+                }
+            }
+        }
+            
+        if transaction.entries.iter().any(|e| self.accounts.get(&e.account_id).is_some() && 
             self.accounts.get(&e.account_id).unwrap().reconciliation_info.is_some() && 
             self.accounts.get(&e.account_id).unwrap().reconciliation_info.as_ref().unwrap().date > e.date) 
         {
@@ -880,17 +886,17 @@ mod tests {
 
     #[test]
     fn test_add_transaction_before_reconciliation_date_rejected() {
-        let (mut books, id1, id2) = setup_books();
+        let (mut books, account1_id, account2_id) = setup_books();
         
         // Add a transaction and reconcile the account
         let reconciliation_date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
-        let t1 = build_transaction_with_date(Some(id1), Some(id2), reconciliation_date);
+        let t1 = build_transaction_with_date(Some(account1_id), Some(account2_id), reconciliation_date);
         books.add_transaction(t1.clone()).unwrap();
-        books.reconcile_account(id1, t1.id).unwrap();
+        books.reconcile_account(account1_id, t1.id).unwrap();
         
         // Try to add a transaction before the reconciliation date - should be rejected
         let early_date = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
-        let t2 = build_transaction_with_date(Some(id1), Some(id2), early_date);
+        let t2 = build_transaction_with_date(Some(account1_id), Some(account2_id), early_date);
         let result = books.add_transaction(t2);
         assert!(result.is_err());
         assert_eq!("A transaction entry can not be added before an accounts reconciliation date", result.err().unwrap().error);
@@ -1587,12 +1593,12 @@ mod tests {
     fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty("My Books");
         let dr_account1 = Account::create_new("Savings Account 1", AccountType::Asset);
-        let id1: Uuid = dr_account1.id;
+        let dr_account_id: Uuid = dr_account1.id;
         books.add_account(dr_account1);
         let cr_account1 = Account::create_new("Savings Account 2", AccountType::Asset);
-        let id2: Uuid = cr_account1.id;
+        let cr_account_id: Uuid = cr_account1.id;
         books.add_account(cr_account1);
-        (books, id1, id2)
+        (books, dr_account_id, cr_account_id)
     }
 
     fn build_transaction(id1: Option<Uuid>, id2: Option<Uuid>) -> Transaction {

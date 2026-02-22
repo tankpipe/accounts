@@ -70,7 +70,7 @@ impl Transaction {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Entry {
     pub id: Uuid,
     pub transaction_id: Uuid,
