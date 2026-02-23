@@ -199,7 +199,7 @@ impl Books {
             self.accounts.get(&e.account_id).unwrap().reconciliation_info.is_some() && 
             self.accounts.get(&e.account_id).unwrap().reconciliation_info.as_ref().unwrap().date > e.date) 
         {
-            return Some(Err(BooksError::from_str("A transaction entry can not be added before an accounts reconciliation date")))
+            return Some(Err(BooksError::from_str("Account transactions can not be changed earlier than the account's reconciliation date")))
         }
         None
     }
@@ -451,18 +451,21 @@ impl Books {
         account_id: Uuid,
         transactions: Vec<Transaction>,
     ) -> Result<Vec<ReconciliationResult>, BooksError> {
+        // 1) Normalize input to account-related transactions and sort by account date/order.
         let mut input_txns: Vec<Transaction> = transactions
             .into_iter()
             .filter(|t| t.involves_account(&account_id))
             .collect();
         sort_transactions_by_account(&mut input_txns, Some(account_id), TransactionSortOrder::OldestFirst);
 
+        // 2) Load existing account transactions (with balances) and track matched indices.
         let existing_txns = self.account_transactions(account_id)?;
         let mut matched_indices: Vec<usize> = Vec::new();
 
         let mut results = Vec::with_capacity(input_txns.len());
 
         for input in input_txns.iter() {
+            // 3) Extract the account entry details from the input transaction.
             let entry = input
                 .find_entry_by_account(&account_id)
                 .expect("transaction involves account");
@@ -473,6 +476,7 @@ impl Books {
             let description = &entry.description;
             let expected_balance = entry.balance;
 
+            // 4) Try exact match first; if none, try partial/mismatch rules.
             let (status, matched_id) = existing_txns
                 .iter()
                 .enumerate()
@@ -521,6 +525,7 @@ impl Books {
                 })
                 .unwrap_or((ReconciliationMatchStatus::Unmatched, None));
 
+            // 5) Record this input transaction's reconciliation outcome.
             results.push(ReconciliationResult {
                 transaction: input.clone(),
                 status,
@@ -529,7 +534,7 @@ impl Books {
             });
         }
 
-        // If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
+        // 6) If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
         let mut mismatched_indices: Vec<usize> = Vec::new();
         for i in 0..results.len() {
             match results[i].status {
@@ -548,6 +553,91 @@ impl Books {
         }
 
         Ok(results)
+    }
+
+    pub fn reconcile_account_transactions(&mut self, account_id: Uuid, transaction_ids: Vec<Uuid>) -> Result<(), BooksError> {
+        println!("Reconciling account transactions for account {} transactions: {:?}", account_id, transaction_ids);
+        if !self.accounts.contains_key(&account_id) {
+            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+        }
+
+        let mut account_transactions = self.account_transactions(account_id)?;
+        let mut last_transaction: Option<Transaction> = None;
+        let mut last_index: Option<usize> = None;
+        
+        // Reconcile each transaction.
+        for transaction_id in transaction_ids {
+            // let mut transaction = self.transaction(transaction_id).ok_or_else(|| {
+            //     BooksError::from_str(
+            //         format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
+            //     )
+            // })?;
+
+            // find the index of transaction in account_transactions
+            let idx = account_transactions.iter().position(|t| t.id == transaction_id).unwrap();
+            
+            let transaction = account_transactions.iter_mut().find(|t| t.id == transaction_id).ok_or_else(|| {
+                BooksError::from_str(
+                    format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
+                )
+            })?;
+            transaction.reconcile(account_id);
+            self.update_transaction(transaction.clone())?;
+            println!("Reconciled transaction {:?}", self.transaction(transaction_id));
+            
+            if last_index.is_none_or(|li|li < idx) {
+                last_index = Some(idx);
+                last_transaction = Some(transaction.clone())
+            }
+        }
+
+        // Set the reconciliation info for the account.
+        if let Some(t) = last_transaction {
+            if let Some(account) = self.accounts.get_mut(&account_id) {
+                let last_entry = t.find_entry_by_account(&account_id).unwrap();
+                account.reconciliation_info = Some(crate::account::ReconciliationInfo {
+                    date: last_entry.date,
+                    balance: last_entry.balance.unwrap(),
+                    transaction_id: t.id,
+                });
+            }      
+        }
+
+        Ok(())
+    }
+
+    pub fn reconcile_account_by_transaction(&mut self, account_id: Uuid, transaction_id: Uuid) -> Result<(), BooksError> {
+        if !self.accounts.contains_key(&account_id) {
+            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+        }
+        
+        let mut account_transactions = self.account_transactions(account_id)?;
+
+        let transaction_index = account_transactions.iter().position(|t| t.id == transaction_id).ok_or_else(|| {
+            BooksError::from_str(
+                format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
+            )
+        })?;
+        
+        if let Some(account) = self.accounts.get_mut(&account_id) {
+            
+            let cur_recon_index: Option<usize> = account.reconciliation_info.as_ref().and_then(|ri| account_transactions.iter().position(|t| t.id == ri.transaction_id));
+            
+            let last_entry = account_transactions[transaction_index].find_entry_by_account(&account_id).unwrap();
+            if cur_recon_index.is_none_or(|cur_idx|cur_idx < transaction_index) {
+                account.reconciliation_info = Some(crate::account::ReconciliationInfo {
+                    date: last_entry.date,
+                    balance: last_entry.balance.unwrap(),
+                    transaction_id,
+                });    
+            }
+            
+        }
+
+        let transaction = &mut account_transactions[transaction_index];
+        transaction.reconcile(account_id);             
+        self.update_transaction(transaction.clone())?;
+        Ok(())
     }
 
     pub fn reconcile_account(&mut self, account_id: Uuid, transaction_id: Uuid) -> Result<(), BooksError> {
@@ -1400,6 +1490,28 @@ mod tests {
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let result = books.reconcile(Uuid::new_v4(), vec![t1]);
         assert!(result.is_err());
+    }
+
+     #[test]
+    fn test_reconcile_match_after_unreconciled_entry() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        let t2 = build_transaction_with_date(None, Some(id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+
+        let mut statement_t2 = clone_transaction_for_reconcile(&t2);
+        for e in &mut statement_t2.entries {
+            if e.account_id == id2 {
+                e.balance = Some(dec!(-20000));
+                break;
+            }
+        }
+
+        let results = books.reconcile(id2, vec![statement_t2]).unwrap();
+        assert_eq!(1, results.len());
+        assert_eq!(ReconciliationMatchStatus::Matched, results[0].status);
+        assert_eq!(results[0].matched_transaction_id.unwrap(), t2.id);
     }
 
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {

@@ -68,6 +68,15 @@ impl Transaction {
     pub fn find_entry_by_account(&self, account_id: &Uuid) -> Option<&Entry> {
         self.entries.iter().find(|e| e.account_id == *account_id)
     }
+
+    pub fn reconcile(&mut self, account_id: Uuid) {
+        self.entries.iter_mut().filter(|e| e.account_id == account_id).for_each(|e| {
+            if e.account_id == account_id {
+                e.reconciled = true;
+                return;
+            }
+        });   
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
