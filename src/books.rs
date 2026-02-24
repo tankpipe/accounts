@@ -498,7 +498,7 @@ impl Books {
     }
 
     /// Reconcile a list of transactions against the books for a given account.
-    pub fn reconcile(
+    pub fn match_transactions(
         &self,
         account_id: Uuid,
         transactions: Vec<Transaction>,
@@ -1172,7 +1172,7 @@ mod tests {
         }
 
         let to_reconcile = vec![statement_t1, statement_t2, statement_t3_unmatched];
-        let results = books.reconcile(id2, to_reconcile).unwrap();
+        let results = books.match_transactions(id2, to_reconcile).unwrap();
 
         assert_eq!(3, results.len());
 
@@ -1322,7 +1322,7 @@ mod tests {
                 break;
             }
         }
-        let results = books.reconcile(id2, vec![statement_t1]).unwrap();
+        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
 
         assert_eq!(1, results.len());
         assert_eq!(results[0].balance, Some(dec!(-10000)));
@@ -1345,7 +1345,7 @@ mod tests {
             }
         }
 
-        let results = books.reconcile(id2, vec![partial_t1]).unwrap();
+        let results = books.match_transactions(id2, vec![partial_t1]).unwrap();
         assert_eq!(1, results.len());
         assert!(matches!(
             results[0].status,
@@ -1373,7 +1373,7 @@ mod tests {
             }
         }
 
-        let results = books.reconcile(id2, vec![next_day]).unwrap();
+        let results = books.match_transactions(id2, vec![next_day]).unwrap();
         assert_eq!(1, results.len());
         assert!(matches!(
             results[0].status,
@@ -1399,7 +1399,7 @@ mod tests {
             }
         }
 
-        let results = books.reconcile(id2, vec![statement_t1]).unwrap();
+        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
 
         assert_eq!(1, results.len());
         assert!(matches!(results[0].status, ReconciliationMatchStatus::Mismatch));
@@ -1430,7 +1430,7 @@ mod tests {
         }
 
         let results = books
-            .reconcile(id2, vec![statement_t1, statement_t2])
+            .match_transactions(id2, vec![statement_t1, statement_t2])
             .unwrap();
 
         assert_eq!(2, results.len());
@@ -1442,7 +1442,7 @@ mod tests {
     fn test_reconcile_invalid_account() {
         let (books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
-        let result = books.reconcile(Uuid::new_v4(), vec![t1]);
+        let result = books.match_transactions(Uuid::new_v4(), vec![t1]);
         assert!(result.is_err());
     }
 
@@ -1462,7 +1462,7 @@ mod tests {
             }
         }
 
-        let results = books.reconcile(id2, vec![statement_t2]).unwrap();
+        let results = books.match_transactions(id2, vec![statement_t2]).unwrap();
         assert_eq!(1, results.len());
         assert_eq!(ReconciliationMatchStatus::Matched, results[0].status);
         assert_eq!(results[0].matched_transaction_id.unwrap(), t2.id);
