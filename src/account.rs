@@ -70,14 +70,27 @@ impl Transaction {
     }
 
     pub fn reconcile(&mut self, account_id: Uuid) {
-        self.entries.iter_mut().filter(|e| e.account_id == account_id).for_each(|e| {
-            if e.account_id == account_id {
-                e.reconciled = true;
-                return;
-            }
-        });   
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id) {
+            entry.reconciled_status = Some(ReconciledStatus::Reconciled);
+        }   
+    }
+
+    pub fn reconcile_outstanding(&mut self, account_id: Uuid) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id && e.reconciled_status.is_none()) {
+            entry.reconciled_status = Some(ReconciledStatus::Outstanding);
+            return true
+        } 
+        false
     }
 }
+
+#[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub enum ReconciledStatus {
+    Reconciled,
+    Outstanding,
+}
+
+
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Entry {
@@ -92,7 +105,7 @@ pub struct Entry {
     pub amount: Decimal,
     pub balance: Option<Decimal>,
     #[serde(default)]
-    pub reconciled: bool,
+    pub reconciled_status: Option<ReconciledStatus>,
 }
 
 impl Entry {
@@ -114,10 +127,14 @@ impl Entry {
         self.set_balance(Some(balance.clone()));
         balance
     }
-}
-pub struct Transaction2 {
-    pub id: Uuid,
-    pub events: Vec<Entry>,
+
+    pub fn is_reconciled(&self) -> bool {
+        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Reconciled)
+    }
+
+    pub fn is_reconciled_or_outstanding(&self) -> bool {
+        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Outstanding || s == ReconciledStatus::Reconciled)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -371,7 +388,7 @@ mod tests {
             entry_type,
             amount: amount,
             balance: None,
-            reconciled: false,
+            reconciled_status: None,
         }
     }
 }

@@ -142,7 +142,7 @@ impl Scheduler {
                             entry_type: entry.entry_type,
                             date: next_date.clone(),
                             balance: None,
-                            reconciled: false,
+                            reconciled_status: None,
                         };
                         
                         // Apply all modifiers in sequence
