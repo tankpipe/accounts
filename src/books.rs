@@ -255,12 +255,13 @@ impl Books {
         if let Some(value) = self.validate_transaction(&transaction) {
             return value;
         }
-
+        
         let transaction_id = transaction.id;
 
         if let Some(entry) = transaction.entries.iter_mut().find(|e| e.account_id == account_id) {
             if entry.reconciled_status.is_none_or(|rs|rs != status) { 
                 entry.reconciled_status = Some(status);
+                transaction.status = TransactionStatus::Recorded;
                 if let Some(index) = self.transactions.iter().position(|t| t.id == transaction_id) {
                     let _old = std::mem::replace(&mut self.transactions[index], transaction);
                 } else {
@@ -275,6 +276,13 @@ impl Books {
     pub fn delete_transaction(&mut self, id: &Uuid) -> Result<(), BooksError> {
         if let Some(index) = self.transactions.iter().position(|t| t.id == *id) {
             println!("remove: {:?}", index);
+
+            if let Some(transaction) = self.transactions.get(index) {
+                if transaction.entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
+                    return Err(BooksError::from_str("Can not delete a transaction with reconciled or outstanding entries"));
+                }
+            }
+
             self.transactions.remove(index);
             Ok(())
         } else {
@@ -643,8 +651,10 @@ impl Books {
             }
         }
         
-        // Flag any outstanding transactions before the first transaction.
-        for earlier_transaction in account_transactions.iter_mut().take(first_index.unwrap()).filter(|t|t.find_entry_by_account(&account_id).is_some()) {
+        // Flag any now outstanding transactions before the first transaction.
+        for earlier_transaction in account_transactions.iter_mut().take(first_index.unwrap())
+                .filter(|t|t.find_entry_by_account(&account_id)
+                .is_some_and(|e|e.reconciled_status.is_none())) {                    
             self.reconcile_transaction(earlier_transaction.clone(), account_id, ReconciledStatus::Outstanding)?;
         }    
 
@@ -662,7 +672,7 @@ impl Books {
 
         Ok(())
     }
-    
+
 
     pub fn rollback_reconciliation(&mut self, account_id: Uuid, to_date: NaiveDate) -> Result<(), BooksError> {
         if !self.accounts.contains_key(&account_id) {
@@ -1252,20 +1262,32 @@ mod tests {
     #[test]
     fn test_reconcile_account_sets_info_and_marks_entries_correctly() {
         let (mut books, account_id1, account_id2) = setup_books();
+        let t0 = build_transaction_with_date(Some(account_id1), Some(account_id2), NaiveDate::from_ymd_opt(2022, 6, 3).unwrap());
         let t1 = build_transaction_with_date(Some(account_id1), Some(account_id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let t2 = build_transaction_with_date(Some(account_id1), Some(account_id2), NaiveDate::from_ymd_opt(2022, 6, 5).unwrap());
         let t3 = build_transaction_with_date(Some(account_id1), Some(account_id2), NaiveDate::from_ymd_opt(2022, 6, 6).unwrap());
 
+        books.add_transaction(t0.clone()).unwrap();
         books.add_transaction(t1.clone()).unwrap();
         books.add_transaction(t2.clone()).unwrap();
         books.add_transaction(t3.clone()).unwrap();
 
+        // reconcile earliest transaction first to check it does not change with later reconciliations
+        books.reconcile_account_transactions(account_id1, vec![t0.id]).unwrap();
         books.reconcile_account_transactions(account_id1, vec![t2.id]).unwrap();
 
         let account = books.accounts.get(&account_id1).unwrap();
         let info = account.reconciliation_info.as_ref().unwrap();
         assert_eq!(t2.id, info.transaction_id);
         assert_eq!(t2.entries[0].date, info.date);
+
+        let t0_entry = books
+            .transactions()
+            .iter()
+            .find(|t| t.id == t0.id)
+
+            .and_then(|t| t.find_entry_by_account(&account_id1))
+            .unwrap();
 
         let t1_entry = books
             .transactions()
@@ -1286,6 +1308,7 @@ mod tests {
             .and_then(|t| t.find_entry_by_account(&account_id1))
             .unwrap();
 
+        assert_eq!( Some(ReconciledStatus::Reconciled), t0_entry.reconciled_status);
         assert_eq!( Some(ReconciledStatus::Outstanding), t1_entry.reconciled_status);
         assert_eq!( Some(ReconciledStatus::Reconciled), t2_entry.reconciled_status);
         assert_eq!( None, t3_entry.reconciled_status);
