@@ -545,7 +545,8 @@ impl Books {
                         && existing
                             .find_entry_by_account(&account_id)
                             .map(|e| {
-                                e.date == date
+                                (e.date - date).num_days().abs() <= 14
+                                    && e.date == date
                                     && e.amount == amount
                                     && e.entry_type == entry_type
                                     && e.balance == expected_balance
@@ -562,6 +563,10 @@ impl Books {
                             return None;
                         }
                         existing.find_entry_by_account(&account_id).and_then(|e| {
+                            let within_14_days = (e.date - date).num_days().abs() <= 14;
+                            if !within_14_days {
+                                return None;
+                            }
                             let date_match = (e.date - date).num_days().abs() <= 1;
                             let amount_match = e.amount == amount;
                             let description_match = e.description == *description;
@@ -1529,6 +1534,27 @@ mod tests {
             results[0].matched_transaction_id.unwrap(),
             t1.id
         );
+    }
+
+    #[test]
+    fn test_reconcile_unmatched_when_more_than_14_days_apart() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
+        books.add_transaction(t1.clone()).unwrap();
+
+        let mut statement_t1 = clone_transaction_for_reconcile(&t1);
+        for e in &mut statement_t1.entries {
+            if e.account_id == id2 {
+                e.date = NaiveDate::from_ymd_opt(2022, 6, 20).unwrap();
+                e.balance = Some(dec!(-10000));
+                break;
+            }
+        }
+
+        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
+        assert_eq!(1, results.len());
+        assert!(matches!(results[0].status, ReconciliationMatchStatus::Unmatched));
+        assert_eq!(None, results[0].matched_transaction_id);
     }
 
     #[test]
