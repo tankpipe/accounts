@@ -39,6 +39,10 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    pub fn date(&self) -> Option<NaiveDate> {
+        self.entries.first().map(|e| e.date)
+    }
+
     pub fn account_entries(&self, account_id: Uuid) -> Vec<Entry> {
         self.entries
             .iter()
@@ -64,9 +68,31 @@ impl Transaction {
     pub fn find_entry_by_account(&self, account_id: &Uuid) -> Option<&Entry> {
         self.entries.iter().find(|e| e.account_id == *account_id)
     }
+
+    pub fn reconcile(&mut self, account_id: Uuid) {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id) {
+            entry.reconciled_status = Some(ReconciledStatus::Reconciled);
+        }   
+    }
+
+    pub fn reconcile_outstanding(&mut self, account_id: Uuid) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id && e.reconciled_status.is_none()) {
+            entry.reconciled_status = Some(ReconciledStatus::Outstanding);
+            return true
+        } 
+        false
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub enum ReconciledStatus {
+    Reconciled,
+    Outstanding,
+}
+
+
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Entry {
     pub id: Uuid,
     pub transaction_id: Uuid,
@@ -78,6 +104,8 @@ pub struct Entry {
     pub entry_type: Side,
     pub amount: Decimal,
     pub balance: Option<Decimal>,
+    #[serde(default)]
+    pub reconciled_status: Option<ReconciledStatus>,
 }
 
 impl Entry {
@@ -99,10 +127,14 @@ impl Entry {
         self.set_balance(Some(balance.clone()));
         balance
     }
-}
-pub struct Transaction2 {
-    pub id: Uuid,
-    pub events: Vec<Entry>,
+
+    pub fn is_reconciled(&self) -> bool {
+        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Reconciled)
+    }
+
+    pub fn is_reconciled_or_outstanding(&self) -> bool {
+        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Outstanding || s == ReconciledStatus::Reconciled)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -111,7 +143,7 @@ pub struct AccountCategory {
     normal_balance: Side,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum AccountType {
     Asset,
     Liability,
@@ -142,13 +174,23 @@ impl AccountType {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ReconciliationInfo {    
+    #[serde(serialize_with = "serialize_naivedate")]
+    #[serde(deserialize_with = "deserialize_naivedate")]
+    pub date: NaiveDate,
+    pub balance: Decimal,
+    pub transaction_id: Uuid,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Account {
     pub id: Uuid,
     pub name: String,
     pub account_type: AccountType,
     pub balance: Decimal,
     pub starting_balance: Decimal,
+    pub reconciliation_info: Option<ReconciliationInfo>,    
 }
 
 impl Account {
@@ -159,6 +201,7 @@ impl Account {
             account_type,
             balance: dec!(0),
             starting_balance: dec!(0),
+            reconciliation_info: None,
         };
     }
 
@@ -187,7 +230,7 @@ mod tests {
     fn test_update_entry_balance() {
         let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
         let transaction_id = Uuid::new_v4();
-        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
         let mut entry = build_entry(
             transaction_id,
             date,
@@ -212,7 +255,7 @@ mod tests {
         let transaction_id = Uuid::new_v4();
         let mut entry = build_entry(
             transaction_id,
-            NaiveDate::from_ymd(2023, 2, 14),
+            NaiveDate::from_ymd_opt(2023, 2, 14).unwrap(),
             "loan payment",
             account1.id,
             Side::Credit,
@@ -226,7 +269,7 @@ mod tests {
         let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
         let account2 = Account::create_new("Loan 1", super::AccountType::Liability);
         let transaction_id = Uuid::new_v4();
-        let date = NaiveDate::from_ymd(2023, 2, 14);
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
         let mut t = Transaction {
             id: transaction_id,
             entries: [].to_vec(),
@@ -293,6 +336,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_transaction_date_with_entries() {
+        let account1 = Account::create_new("Savings Account 1", super::AccountType::Asset);
+        let transaction_id = Uuid::new_v4();
+        let date = NaiveDate::from_ymd_opt(2023, 2, 14).unwrap();
+        let t = Transaction {
+            id: transaction_id,
+            entries: vec![build_entry(
+                transaction_id,
+                date,
+                "loan payment",
+                account1.id,
+                Side::Credit,
+                dec!(100),
+            )],
+            status: TransactionStatus::Recorded,
+            schedule_id: None,
+        };
+
+        assert_eq!(Some(date), t.date());
+    }
+
+    #[test]
+    fn test_transaction_date_with_no_entries() {
+        let transaction_id = Uuid::new_v4();
+        let t = Transaction {
+            id: transaction_id,
+            entries: vec![],
+            status: TransactionStatus::Recorded,
+            schedule_id: None,
+        };
+
+        assert!(t.date().is_none());
+    }
+
     fn build_entry(
         transaction_id: Uuid,
         date: NaiveDate,
@@ -310,6 +388,7 @@ mod tests {
             entry_type,
             amount: amount,
             balance: None,
+            reconciled_status: None,
         }
     }
 }
