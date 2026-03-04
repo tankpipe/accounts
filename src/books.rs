@@ -174,6 +174,10 @@ impl Books {
         Ok(())
     }
 
+    pub fn get_account(&self, id: &Uuid) -> Result<Account, BooksError> {
+        self.accounts.get(id).cloned().ok_or(BooksError::from_str(format!("Account {} not found.", id).as_str()))
+    }
+
     pub fn accounts(&self) -> Vec<Account> {
         let mut accounts_clone: Vec<Account> = Vec::new();
         for a in self.accounts.values() {
@@ -338,7 +342,7 @@ impl Books {
         None
     }
 
-    /// Get a copy of the transactions with balances for a given Account.
+    /// Get a copy of the entries with balances for a given Account.
     pub fn account_entries(&self, account_id: Uuid) -> Result<Vec<Entry>, BooksError> {
         if !self.accounts.contains_key(&account_id) {
             return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
@@ -2081,7 +2085,7 @@ mod tests {
         assert_eq!("st test 1", books.transactions[4].entries[0].description);
     }
 
-    fn setup_books() -> (Books, Uuid, Uuid) {
+    pub fn setup_books() -> (Books, Uuid, Uuid) {
         let mut books = Books::build_empty("My Books");
         let dr_account1 = Account::create_new("Savings Account 1", AccountType::Asset);
         let dr_account_id: Uuid = dr_account1.id;
@@ -2096,7 +2100,7 @@ mod tests {
         build_transaction_with_date(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap())
     }
 
-    fn build_transaction_with_date(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate) -> Transaction {
+    pub fn build_transaction_with_date(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate) -> Transaction {
         let transaction_id = Uuid::new_v4();
         let description_str = "received moneys";
         let amount = dec!(10000);

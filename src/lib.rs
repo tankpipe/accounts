@@ -5,3 +5,4 @@ pub mod serializer;
 pub mod scheduler;
 pub mod schedule;
 pub mod books_prev_versions;
+pub mod interest;
