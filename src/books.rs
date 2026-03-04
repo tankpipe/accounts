@@ -24,6 +24,28 @@ pub enum ReconciliationMatchStatus {
     Unmatched,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum ReconciliationItem {
+    Reconciliation(ReconciliationResult),
+    Original(TargetResult),
+}
+
+impl ReconciliationItem {
+    pub fn status(&self) -> ReconciliationMatchStatus {
+        match self {
+            ReconciliationItem::Reconciliation(r) => r.status.clone(),
+            ReconciliationItem::Original(o) => o.status.clone(),
+        }
+    }
+
+    pub fn set_status(&mut self, status: ReconciliationMatchStatus) {
+        match self {
+            ReconciliationItem::Reconciliation(r) => r.status = status,
+            ReconciliationItem::Original(o) => o.status = status,
+        }
+    }
+}
+
 /// Result for a single transaction in a reconciliation.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReconciliationResult {
@@ -32,6 +54,15 @@ pub struct ReconciliationResult {
     pub matched_transaction_id: Option<Uuid>,
     pub balance: Option<Decimal>,
 }
+
+/// Wrapper for an existing transaction during reconciliation.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TargetResult {
+    pub transaction: Transaction,
+    pub status: ReconciliationMatchStatus,
+    pub matched_reconciliation_id: Option<Uuid>,
+}
+
 
 /// Book of accounts a.k.a The Books.
 #[derive(Serialize, Deserialize)]
@@ -505,14 +536,14 @@ impl Books {
         new_last
     }
 
-    /// Reconcile a list of transactions against the books for a given account.
-    pub fn match_transactions(
+    /// Reconcile a list of transactions against the books for a given account.    
+    pub fn prepare_reconciliation(
         &self,
         account_id: Uuid,
-        transactions: Vec<Transaction>,
-    ) -> Result<Vec<ReconciliationResult>, BooksError> {
+        reconcile_transactions: Vec<Transaction>,
+    ) -> Result<Vec<ReconciliationItem>, BooksError> {
         // 1) Normalize input to account-related transactions and sort by account date/order.
-        let mut input_txns: Vec<Transaction> = transactions
+        let mut input_txns: Vec<Transaction> = reconcile_transactions
             .into_iter()
             .filter(|t| t.involves_account(&account_id))
             .collect();
@@ -522,7 +553,7 @@ impl Books {
         let existing_txns = self.account_transactions(account_id)?;
         let mut matched_indices: Vec<usize> = Vec::new();
 
-        let mut results = Vec::with_capacity(input_txns.len());
+        let mut results: Vec<ReconciliationItem> = Vec::with_capacity(input_txns.len() + existing_txns.len());
 
         for input in input_txns.iter() {
             // 3) Extract the account entry details from the input transaction.
@@ -591,18 +622,126 @@ impl Books {
                 .unwrap_or((ReconciliationMatchStatus::Unmatched, None));
 
             // 5) Record this input transaction's reconciliation outcome.
-            results.push(ReconciliationResult {
+            results.push(ReconciliationItem::Reconciliation(ReconciliationResult {
                 transaction: input.clone(),
                 status,
                 balance: expected_balance,
                 matched_transaction_id: matched_id,
-            });
+            }));
         }
 
-        // 6) If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
+        // 6) Add existing transactions to results, splicing matched reconciliation transactions immediately after their targets
+        let mut final_results: Vec<ReconciliationItem> = Vec::with_capacity(existing_txns.len() + results.len());
+        let mut reconciliation_lookup: std::collections::HashMap<Uuid, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
+        
+        // Group reconciliation transactions by their matched target ID
+        for reconciliation_item in &results {
+            if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
+                if let Some(matched_id) = recon_result.matched_transaction_id {
+                    reconciliation_lookup.entry(matched_id).or_insert_with(Vec::new).push(reconciliation_item);
+                }
+            }
+        }
+        
+        // Add existing transactions with their matched reconciliation transactions
+        for existing_txn in existing_txns.iter() {
+            // Check if this existing transaction has any matches
+            let matched_reconciliations = reconciliation_lookup.get(&existing_txn.id);
+            
+            // Determine the status based on matches
+            let status = if let Some(matches) = matched_reconciliations {
+                if matches.len() > 1 {
+                    // If multiple matches, use the first one's status
+                    matches[0].status()
+                } else if matches.len() == 1 {
+                    matches[0].status()
+                } else {
+                    ReconciliationMatchStatus::Unmatched
+                }
+            } else {
+                ReconciliationMatchStatus::Unmatched
+            };
+            
+            // Add the original existing transaction with updated status
+            let mut original_item = ReconciliationItem::Original(TargetResult {
+                transaction: existing_txn.clone(),
+                status,
+                matched_reconciliation_id: None,
+            });
+            
+            // If there are matches, set the matched_reconciliation_id to the first match's transaction ID
+            if let Some(matches) = matched_reconciliations {
+                if !matches.is_empty() {
+                    if let ReconciliationItem::Reconciliation(recon_result) = matches[0] {
+                        if let Some(_target_id) = recon_result.matched_transaction_id {
+                            if let ReconciliationItem::Original(ref mut target_result) = original_item {
+                                target_result.matched_reconciliation_id = Some(recon_result.transaction.id);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            final_results.push(original_item);
+            
+            // Add any reconciliation transactions that matched this existing transaction
+            if let Some(matched_reconciliations) = matched_reconciliations {
+                for reconciliation_item in matched_reconciliations {
+                    final_results.push((*reconciliation_item).clone());
+                }
+            }
+        }
+        
+        // Add unmatched reconciliation transactions, inserting them by date
+        // Group unmatched transactions by date for efficient insertion
+        let mut unmatched_by_date: std::collections::HashMap<chrono::NaiveDate, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
+        
+        for reconciliation_item in &results {
+            if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
+                if recon_result.matched_transaction_id.is_none() {
+                    let entry = recon_result.transaction.find_entry_by_account(&account_id)
+                        .expect("reconciliation transaction involves account");
+                    unmatched_by_date.entry(entry.date).or_insert_with(Vec::new).push(reconciliation_item);
+                }
+            }
+        }
+        
+        // Insert unmatched transactions by date
+        for (date, unmatched_items) in unmatched_by_date {
+            // Find the position where this date should be inserted (as last item of this date)
+            let mut insert_position = final_results.len(); // Default to end if no suitable position found
+            
+            for (i, result_item) in final_results.iter().enumerate() {
+                let item_date = match result_item {
+                    ReconciliationItem::Reconciliation(recon) => {
+                        recon.transaction.find_entry_by_account(&account_id)
+                            .expect("reconciliation transaction involves account").date
+                    }
+                    ReconciliationItem::Original(target) => {
+                        target.transaction.find_entry_by_account(&account_id)
+                            .expect("target transaction involves account").date
+                    }
+                };
+                
+                if item_date > date {
+                    insert_position = i;
+                    break;
+                } else if item_date == date {
+                    // Continue looking to find the last item with this date
+                    insert_position = i + 1;
+                }
+            }
+            
+            // Insert all unmatched transactions for this date at the calculated position
+            for (offset, unmatched_item) in unmatched_items.iter().enumerate() {
+                final_results.insert(insert_position + offset, (*unmatched_item).clone());
+            }
+        }
+
+        // 7) If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
         let mut mismatched_indices: Vec<usize> = Vec::new();
-        for i in 0..results.len() {
-            match results[i].status {
+        for i in 0..final_results.len() {
+            match final_results[i].status() {
                 ReconciliationMatchStatus::Unmatched => {
                     mismatched_indices.clear();
                 }
@@ -611,15 +750,16 @@ impl Books {
                 }
                 ReconciliationMatchStatus::Matched | ReconciliationMatchStatus::PartialMatch => {
                     for idx in mismatched_indices.drain(..) {
-                        results[idx].status = ReconciliationMatchStatus::PartialMatch;
+                        final_results[idx].set_status(ReconciliationMatchStatus::PartialMatch);
                     }
                 }
             }
         }
 
-        Ok(results)
+        Ok(final_results)
     }
 
+    
     pub fn reconcile_account_transactions(&mut self, account_id: Uuid, transaction_ids: Vec<Uuid>) -> Result<(), BooksError> {
         println!("Reconciling account transactions for account {} transactions: {:?}", account_id, transaction_ids);
         if !self.accounts.contains_key(&account_id) {
@@ -636,6 +776,7 @@ impl Books {
         for transaction_id in transaction_ids {
 
             // find the index of transaction in account_transactions
+            //TODO: Fix unwrap check
             let idx = account_transactions.iter().position(|t| t.id == transaction_id).unwrap();
             
             let transaction = account_transactions.iter_mut().find(|t| t.id == transaction_id).ok_or_else(|| {
@@ -657,11 +798,13 @@ impl Books {
         }
         
         // Flag any now outstanding transactions before the first transaction.
-        for earlier_transaction in account_transactions.iter_mut().take(first_index.unwrap())
-                .filter(|t|t.find_entry_by_account(&account_id)
-                .is_some_and(|e|e.reconciled_status.is_none())) {                    
-            self.reconcile_transaction(earlier_transaction.clone(), account_id, ReconciledStatus::Outstanding)?;
-        }    
+        if let Some(first_index) = first_index {
+            for earlier_transaction in account_transactions.iter_mut().take(first_index)
+                    .filter(|t|t.find_entry_by_account(&account_id)
+                    .is_some_and(|e|e.reconciled_status.is_none())) {                    
+                self.reconcile_transaction(earlier_transaction.clone(), account_id, ReconciledStatus::Outstanding)?;
+            }    
+        }
 
         // Set the reconciliation info for the account.
         if let Some(t) = new_recon_transaction {
@@ -796,7 +939,7 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::account::*;
-    use crate::books::{BooksError, ReconciliationMatchStatus};
+    use crate::books::{BooksError, ReconciliationItem, ReconciliationMatchStatus};
     use crate::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
     use super::{sort_transactions_by_account, TransactionSortOrder};
 
@@ -1234,34 +1377,60 @@ mod tests {
             }
         }
 
+        let statement_t1_id = statement_t1.id;
+        let statement_t2_id = statement_t2.id;
+        let statement_t3_unmatched_id = statement_t3_unmatched.id;
         let to_reconcile = vec![statement_t1, statement_t2, statement_t3_unmatched];
-        let results = books.match_transactions(id2, to_reconcile).unwrap();
+        let results = books.prepare_reconciliation(id2, to_reconcile).unwrap();
 
-        assert_eq!(3, results.len());
+        assert_eq!(5, results.len());
 
-        // First two should match (t1 and t2 for account id2)
-        assert!(matches!(
-            results[0].status,
-            ReconciliationMatchStatus::Matched
-        ));
-        assert_eq!(
-            results[0].matched_transaction_id.unwrap(),
-            t1.id
-        );
-        assert_eq!(results[0].balance, Some(dec!(-10000)));
+        // Existing transactions with matched reconciliations spliced after.
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.transaction.id, t1.id);
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(target.matched_reconciliation_id, Some(statement_t1_id));
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.transaction.id, statement_t1_id);
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(recon.matched_transaction_id, Some(t1.id));
+                assert_eq!(recon.balance, Some(dec!(-10000)));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
 
-        assert!(matches!(
-            results[1].status,
-            ReconciliationMatchStatus::Matched
-        ));
-        assert_eq!(
-            results[1].matched_transaction_id.unwrap(),
-            t2.id
-        );
-        assert_eq!(results[1].balance, Some(dec!(-20000)));
+        match &results[2] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.transaction.id, t2.id);
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(target.matched_reconciliation_id, Some(statement_t2_id));
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[3] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.transaction.id, statement_t2_id);
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(recon.matched_transaction_id, Some(t2.id));
+                assert_eq!(recon.balance, Some(dec!(-20000)));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
 
-        assert!(matches!(results[2].status, ReconciliationMatchStatus::Unmatched));
-        assert_eq!(results[2].balance, None);
+        match &results[4] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.transaction.id, statement_t3_unmatched_id);
+                assert_eq!(recon.status, ReconciliationMatchStatus::Unmatched);
+                assert_eq!(recon.matched_transaction_id, None);
+                assert_eq!(recon.balance, None);
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1473,10 +1642,15 @@ mod tests {
                 break;
             }
         }
-        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
+        let results = books.prepare_reconciliation(id2, vec![statement_t1]).unwrap();
 
-        assert_eq!(1, results.len());
-        assert_eq!(results[0].balance, Some(dec!(-10000)));
+        assert_eq!(2, results.len());
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.balance, Some(dec!(-10000)));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1496,16 +1670,21 @@ mod tests {
             }
         }
 
-        let results = books.match_transactions(id2, vec![partial_t1]).unwrap();
-        assert_eq!(1, results.len());
-        assert!(matches!(
-            results[0].status,
-            ReconciliationMatchStatus::PartialMatch
-        ));
-        assert_eq!(
-            results[0].matched_transaction_id.unwrap(),
-            t1.id
-        );
+        let results = books.prepare_reconciliation(id2, vec![partial_t1]).unwrap();
+        assert_eq!(2, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(recon.matched_transaction_id, Some(t1.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1524,16 +1703,21 @@ mod tests {
             }
         }
 
-        let results = books.match_transactions(id2, vec![next_day]).unwrap();
-        assert_eq!(1, results.len());
-        assert!(matches!(
-            results[0].status,
-            ReconciliationMatchStatus::PartialMatch
-        ));
-        assert_eq!(
-            results[0].matched_transaction_id.unwrap(),
-            t1.id
-        );
+        let results = books.prepare_reconciliation(id2, vec![next_day]).unwrap();
+        assert_eq!(2, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(recon.matched_transaction_id, Some(t1.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1551,10 +1735,22 @@ mod tests {
             }
         }
 
-        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
-        assert_eq!(1, results.len());
-        assert!(matches!(results[0].status, ReconciliationMatchStatus::Unmatched));
-        assert_eq!(None, results[0].matched_transaction_id);
+        let results = books.prepare_reconciliation(id2, vec![statement_t1]).unwrap();
+        assert_eq!(2, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::Unmatched);
+                assert_eq!(target.matched_reconciliation_id, None);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Unmatched);
+                assert_eq!(recon.matched_transaction_id, None);
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1571,11 +1767,24 @@ mod tests {
             }
         }
 
-        let results = books.match_transactions(id2, vec![statement_t1]).unwrap();
+        let statement_t1_id = statement_t1.id;
+        let results = books.prepare_reconciliation(id2, vec![statement_t1]).unwrap();
 
-        assert_eq!(1, results.len());
-        assert!(matches!(results[0].status, ReconciliationMatchStatus::Mismatch));
-        assert_eq!(results[0].matched_transaction_id.unwrap(), t1.id);
+        assert_eq!(2, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::Mismatch);
+                assert_eq!(target.matched_reconciliation_id, Some(statement_t1_id));
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Mismatch);
+                assert_eq!(recon.matched_transaction_id, Some(t1.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
@@ -1602,19 +1811,41 @@ mod tests {
         }
 
         let results = books
-            .match_transactions(id2, vec![statement_t1, statement_t2])
+            .prepare_reconciliation(id2, vec![statement_t1, statement_t2])
             .unwrap();
 
-        assert_eq!(2, results.len());
-        assert!(matches!(results[0].status, ReconciliationMatchStatus::PartialMatch));
-        assert!(matches!(results[1].status, ReconciliationMatchStatus::Matched));
+        assert_eq!(4, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
+        match &results[2] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[3] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     #[test]
     fn test_reconcile_invalid_account() {
         let (books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
-        let result = books.match_transactions(Uuid::new_v4(), vec![t1]);
+        let result = books.prepare_reconciliation(Uuid::new_v4(), vec![t1]);
         assert!(result.is_err());
     }
 
@@ -1634,10 +1865,32 @@ mod tests {
             }
         }
 
-        let results = books.match_transactions(id2, vec![statement_t2]).unwrap();
-        assert_eq!(1, results.len());
-        assert_eq!(ReconciliationMatchStatus::Matched, results[0].status);
-        assert_eq!(results[0].matched_transaction_id.unwrap(), t2.id);
+        let statement_t2_id = statement_t2.id;
+        let results = books.prepare_reconciliation(id2, vec![statement_t2]).unwrap();
+        assert_eq!(3, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.transaction.id, t1.id);
+                assert_eq!(target.status, ReconciliationMatchStatus::Unmatched);
+                assert_eq!(target.matched_reconciliation_id, None);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.transaction.id, t2.id);
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(target.matched_reconciliation_id, Some(statement_t2_id));
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[2] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(recon.matched_transaction_id, Some(t2.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
     }
 
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {
