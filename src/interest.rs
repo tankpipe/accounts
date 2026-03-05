@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{account::{Account, Entry, Side, Transaction, TransactionStatus}, books::{Books, BooksError}, serializer::*};
+use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::{Books, BooksError}, serializer::*};
 use serde::Deserialize;
 
 pub const CALC_DECIMAL_PRECISION: u32 = 4;
@@ -16,7 +16,6 @@ pub enum InterestType {
     Daily,
     Monthly
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct InterestTerms  {
@@ -54,7 +53,7 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
     let start_date = interest_info.paid_to_date.checked_add_days(Days::new(1)).unwrap();
     let account_entries = books.account_entries(source_account.id)?;
    
-    let previous_entry: Option<&Entry> = account_entries.iter().rev().find(|t| {println!("checking date: {}", t.date); t.date < start_date});
+    let previous_entry: Option<&Entry> = account_entries.iter().rev().find(|t| t.date < start_date);
 
     let starting_balance: Decimal = if let Some(entry) = previous_entry {
         entry.balance.unwrap()
@@ -98,7 +97,7 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
                 balance = entry.balance.unwrap();
             }
         }
-        
+
         monthly_interest_tally += daily_rate * (balance + interest_paid);
         
         if is_end_of_month(cur_date) {           
@@ -114,29 +113,32 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
 
 fn build_interest_transaction(source_account: &Account, interest_account: &Option<Account>, cur_date: NaiveDate, interest_tally: Decimal) -> Transaction {
     let transaction_id = uuid::Uuid::new_v4();
+    let is_interest_bearing = source_account.account_type == AccountType::Asset;
     
     let mut transaction = Transaction {
         id: transaction_id,
-        entries: vec![Entry{
+        entries: vec![],
+        status: TransactionStatus::Projected,
+        schedule_id: None,
+    };
+    if is_interest_bearing || interest_account.as_ref().is_some() {
+        transaction.entries.push(Entry{
             id: uuid::Uuid::new_v4(),
             transaction_id: transaction_id,
-            account_id: source_account.id,
+            account_id: if is_interest_bearing { source_account.id } else { interest_account.as_ref().unwrap().id },
             date: cur_date,
             entry_type: Side::Debit,
             amount: interest_tally,
             balance: None,
             description: "Interest payment".to_string(),
             reconciled_status: None,
-        }],
-        status: TransactionStatus::Projected,
-        schedule_id: None,
-    };
-
-    if interest_account.as_ref().is_some() {
+        });
+    }
+    if !is_interest_bearing || interest_account.as_ref().is_some() {
         transaction.entries.push(Entry{
             id: uuid::Uuid::new_v4(),
             transaction_id: transaction_id,
-            account_id: interest_account.as_ref().unwrap().id,
+            account_id: if is_interest_bearing { interest_account.as_ref().unwrap().id } else { source_account.id },
             date: cur_date,
             entry_type: Side::Credit,
             amount: interest_tally,
@@ -168,6 +170,76 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::Books, interest::{InterestInfo, InterestTerms, InterestType, calculate_interest}};
+
+    #[test]    
+    fn calculate_loan_interest_daily() {
+        let mut books = Books::build_empty("My Books");
+        let mut loan_account = Account::create_new("Loan Account 1", AccountType::Liability);
+        loan_account.starting_balance = dec!(9000);
+        books.add_account(loan_account.clone());
+        
+        let mut transaction_account = Account::create_new("Transaction Account 1", AccountType::Asset);
+        transaction_account.starting_balance = dec!(10000);
+        books.add_account(transaction_account.clone());
+        
+        let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(loan_account.id), NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), "Deposit", dec!(1000)));
+        let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(loan_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(100)));
+        let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(loan_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(200)));
+        let _ = books.add_transaction(build_transaction(Some(loan_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 2, 4).unwrap(), "Withdrawal", dec!(500)));
+
+        let interest_paid = Account::create_new("Interest Earned", AccountType::Expense);        
+        books.add_account(interest_paid.clone());
+
+        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_paid.id) };        
+        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: loan_account.id };        
+        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
+
+        assert_eq!(transactions.len(), 2);
+        assert_eq!(transactions[0].entries.len(), 2);
+        assert_eq!(transactions[0].entries[0].account_id, interest_paid.id);
+        assert_eq!(transactions[0].entries[1].account_id, loan_account.id);
+        assert_eq!(transactions[0].entries[0].amount, dec!(43.37));
+        assert_eq!(transactions[0].entries[0].entry_type, Side::Debit);
+        assert_eq!(transactions[0].entries[1].amount, dec!(43.37));
+        assert_eq!(transactions[0].entries[1].entry_type, Side::Credit);
+        assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+        assert_eq!(transactions[0].entries[1].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+
+        assert_eq!(transactions[1].entries[0].amount, dec!(37.96));
+        assert_eq!(transactions[1].entries[1].amount, dec!(37.96));
+        assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+        assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+    }  
+
+    #[test]
+    fn calculate_loan_interest_daily_on_starting_balance() {
+        let mut books = Books::build_empty("My Books");
+        let mut loan_account = Account::create_new("Loan Account 1", AccountType::Liability);
+        loan_account.starting_balance = dec!(10000);
+        books.add_account(loan_account.clone());
+        let interest_earned = Account::create_new("Interest Paid", AccountType::Expense);        
+        books.add_account(interest_earned.clone());
+
+        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_earned.id) };        
+        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: loan_account.id };        
+        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
+
+        assert_eq!(transactions.len(), 12);
+        assert_eq!(transactions[0].entries.len(), 2);        
+        assert_eq!(transactions[0].entries[0].account_id, interest_earned.id);
+        assert_eq!(transactions[0].entries[1].account_id, loan_account.id);
+        assert_eq!(transactions[0].entries[0].amount, dec!(42.47));
+        assert_eq!(transactions[0].entries[0].entry_type, Side::Debit);
+        assert_eq!(transactions[0].entries[1].amount, dec!(42.47));
+        assert_eq!(transactions[0].entries[1].entry_type, Side::Credit);
+        assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+        assert_eq!(transactions[0].entries[1].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
+
+        assert_eq!(transactions[11].entries[0].amount, dec!(44.45));
+        assert_eq!(transactions[11].entries[1].amount, dec!(44.45));
+        assert_eq!(transactions[11].entries[0].date, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap());
+        assert_eq!(transactions[11].entries[1].date, NaiveDate::from_ymd_opt(2023, 1, 1).unwrap());
+    }
 
     #[test]    
     fn calculate_interest_daily() {
@@ -207,7 +279,6 @@ mod tests {
         assert_eq!(transactions[1].entries[1].amount, dec!(37.96));
         assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
         assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
-
     }
 
 
