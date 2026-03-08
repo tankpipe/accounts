@@ -149,7 +149,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::interest::{self, InterestInfo, InterestTerms, InterestType};
+    use crate::interest::{InterestInfo, InterestTerms, InterestType};
     use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use tempfile::NamedTempFile;
     use super::{Books, load_books};
@@ -219,7 +219,7 @@ mod tests {
             "Monthly interest".to_string(),
             None,
         );
-        books.add_interest_info(InterestInfo::from_components(Some(date), vec![interest_terms], id1));   
+        let _ = books.add_interest_info(InterestInfo::from_components(Some(date), vec![interest_terms], id1));   
         books
    }
 
