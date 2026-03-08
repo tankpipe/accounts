@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::{Books, BooksError}, serializer::*};
+use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::{Books, BooksError}, schedule::ScheduleEnum, serializer::*};
 use serde::Deserialize;
 
 pub const CALC_DECIMAL_PRECISION: u32 = 4;
@@ -18,39 +18,79 @@ pub enum InterestType {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct InterestTerms  {
+pub struct InterestTerms  {   
+    pub id: Uuid, 
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
-    pub date: NaiveDate,
+    pub start_date: NaiveDate,
+    #[serde(serialize_with = "serialize_option_naivedate")]
+    #[serde(deserialize_with = "deserialize_option_naivedate")]
+    pub end_date: Option<NaiveDate>,
     pub rate: Decimal,
-    pub paid: InterestType,
-    pub calculated: InterestType,    
+    pub calculated: InterestType,   
+    pub paid_period: ScheduleEnum,     
+    pub paid_frequency: i32,
+    pub paid_day: i32,
+    pub description: String,
     pub interest_account_id: Option<Uuid>
+}
+
+impl InterestTerms {
+    pub fn from_components(start_date: NaiveDate, end_date: Option<NaiveDate>, rate: Decimal, calculated: InterestType, paid_period: ScheduleEnum, paid_frequency: i32, paid_day: i32, description: String, interest_account_id: Option<Uuid>) -> Self {
+        InterestTerms {
+            id: Uuid::new_v4(),            
+            start_date,
+            end_date,
+            rate,
+            calculated,
+            paid_period,
+            paid_frequency,
+            paid_day,
+            description,
+            interest_account_id
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct InterestInfo  {
-    #[serde(serialize_with = "serialize_naivedate")]
-    #[serde(deserialize_with = "deserialize_naivedate")]
-    pub paid_to_date: NaiveDate,
-    pub terms: InterestTerms,
+    pub id: Uuid,
+    #[serde(serialize_with = "serialize_option_naivedate")]
+    #[serde(deserialize_with = "deserialize_option_naivedate")]
+    pub paid_to_date: Option<NaiveDate>,
+    pub terms: Vec<InterestTerms>,
     pub account_id: Uuid,
 }
 
-
+impl InterestInfo {
+    pub fn from_components(paid_to_date: Option<NaiveDate>, terms: Vec<InterestTerms>, account_id: Uuid) -> Self {
+        InterestInfo {
+            id: Uuid::new_v4(),
+            paid_to_date,
+            terms,
+            account_id
+        }
+    }
+}
 
 pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: NaiveDate) -> Result<Vec<Transaction>, BooksError> {    
     let mut transactions: Vec<Transaction> = Vec::new();
     let source_account = books.get_account(&interest_info.account_id)?;
-    let interest_account: Option<Account> = if interest_info.terms.interest_account_id.is_some() {
-        Some(books.get_account(&interest_info.terms.interest_account_id.unwrap())?) 
+    
+    // For now, use the first term. In the future, this could be extended to handle multiple terms
+    let terms = &interest_info.terms[0];
+    let interest_account: Option<Account> = if terms.interest_account_id.is_some() {
+        Some(books.get_account(&terms.interest_account_id.unwrap())?) 
     } else {
         None
     };
 
-    let daily_rate = interest_info.terms.rate / Decimal::from(DAYS_PER_ANNUM);
+    let daily_rate = terms.rate / Decimal::from(DAYS_PER_ANNUM);
     
-    let start_date = interest_info.paid_to_date.checked_add_days(Days::new(1)).unwrap();
+    let start_date = interest_info.paid_to_date.map_or_else(
+        || interest_info.terms[0].start_date,
+        |date| date.checked_add_days(Days::new(1)).unwrap()
+    );
     let account_entries = books.account_entries(source_account.id)?;
    
     let previous_entry: Option<&Entry> = account_entries.iter().rev().find(|t| t.date < start_date);
@@ -169,7 +209,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::Books, interest::{InterestInfo, InterestTerms, InterestType, calculate_interest}};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::Books, interest::{InterestInfo, InterestTerms, InterestType, calculate_interest}, schedule::ScheduleEnum};
 
     #[test]    
     fn calculate_loan_interest_daily() {
@@ -190,8 +230,18 @@ mod tests {
         let interest_paid = Account::create_new("Interest Earned", AccountType::Expense);        
         books.add_account(interest_paid.clone());
 
-        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_paid.id) };        
-        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: loan_account.id };        
+        let interest_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_paid.id)
+        );
+        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
         let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
@@ -220,8 +270,18 @@ mod tests {
         let interest_earned = Account::create_new("Interest Paid", AccountType::Expense);        
         books.add_account(interest_earned.clone());
 
-        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_earned.id) };        
-        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: loan_account.id };        
+        let interest_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
         let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 12);
@@ -260,8 +320,18 @@ mod tests {
         let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
         books.add_account(interest_earned.clone());
 
-        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_earned.id) };        
-        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: savings_account.id };        
+        let interest_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
         let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
@@ -299,8 +369,18 @@ mod tests {
         let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
         books.add_account(interest_earned.clone());
 
-        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_earned.id) };        
-        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: savings_account.id };        
+        let interest_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
         let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 1);
@@ -327,8 +407,18 @@ mod tests {
         let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
         books.add_account(interest_earned.clone());
 
-        let interest_terms = InterestTerms { date: NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(), rate: dec!(0.05), paid: InterestType::Monthly, calculated: InterestType::Daily, interest_account_id: Some(interest_earned.id) };        
-        let interest_info = InterestInfo { paid_to_date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(), terms: interest_terms, account_id: savings_account.id };        
+        let interest_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
         let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 12);

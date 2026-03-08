@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::serializer::*;
+use crate::{serializer::*};
 use serde::Deserialize;
 
 /// Account models.
@@ -191,6 +191,7 @@ pub struct Account {
     pub balance: Decimal,
     pub starting_balance: Decimal,
     pub reconciliation_info: Option<ReconciliationInfo>,    
+    pub interest_info_id: Option<Uuid>,
 }
 
 impl Account {
@@ -201,7 +202,8 @@ impl Account {
             account_type,
             balance: dec!(0),
             starting_balance: dec!(0),
-            reconciliation_info: None,
+            reconciliation_info: None,  
+            interest_info_id: None,
         };
     }
 

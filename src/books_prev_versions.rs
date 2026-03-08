@@ -12,6 +12,32 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Older version of Books struct for upgrading old files
 #[derive(Serialize, Deserialize)]
+pub struct BooksV005 {
+    pub id: Uuid,
+    pub name: String,
+    pub version: String,
+    pub accounts: HashMap<Uuid, Account>,
+    pub scheduler: Scheduler,
+    pub transactions: Vec<Transaction>,
+    pub settings: Settings,
+}
+
+impl Into<Books> for BooksV005 {
+    fn into(self) -> Books{
+        Books::with_components(
+            self.id,
+            self.name,
+            VERSION.to_string(),
+            self.accounts,
+            self.scheduler,
+            self.transactions,
+            HashMap::new(),   
+            self.settings,  
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct BooksV004 {
     pub id: Uuid,
     pub name: String,
@@ -31,7 +57,8 @@ impl Into<Books> for BooksV004 {
             self.accounts,
             self.scheduler.into(),
             self.transactions,
-            self.settings,
+            HashMap::new(),   
+            self.settings,  
         )
     }
 }

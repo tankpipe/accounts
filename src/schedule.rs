@@ -25,7 +25,7 @@ pub struct ScheduleEntry {
     pub amount: Decimal,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Copy)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Copy, Debug)]
 pub enum ScheduleEnum {
     Days,
     Weeks,

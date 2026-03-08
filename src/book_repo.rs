@@ -5,8 +5,10 @@ use serde_json::Value;
 
 use crate::books::{Books, BooksError};
 use crate::account::Transaction;
-use crate::books_prev_versions::BooksV004;
+use crate::books_prev_versions::{BooksV004, BooksV005};
 use uuid::Uuid;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Simple JSON file storage for Books.
 
@@ -26,12 +28,16 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
                     println!(">>>>>>>>>>>>>>> File details: {} {} {}", v["id"], v["name"], v["version"]);
                     
                     match v["version"].as_str() {
+                        Some("0.0.6") => {
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, why));                            
+                        },
                         Some("0.0.5") => {
-                            return Err(io::Error::new(io::ErrorKind::InvalidData, why));
+                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], VERSION);
+                            return load_previous_version_0_0_5(content)
                         },
                         _ => {
-                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], "current");
-                            return load_previous_version(content)
+                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], VERSION);
+                            return load_previous_version_0_0_4(content)
                         },
 
                     }
@@ -82,13 +88,19 @@ pub fn sort_transactions_for_account(
     *transactions = indexed.into_iter().map(|(_, txn)| txn).collect();
 }
 
-fn load_previous_version(mut content: String) -> Result<Books, io::Error> {
-    match serde_json::from_str::<BooksV004>(&mut content) {
+fn load_previous_version_0_0_5(mut content: String) -> Result<Books, io::Error> {
+    match serde_json::from_str::<BooksV005>(&mut content) {
         Ok(books) => Ok(books.into()),
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
     }
 }
 
+fn load_previous_version_0_0_4(mut content: String) -> Result<Books, io::Error> {
+    match serde_json::from_str::<BooksV004>(&mut content) {
+        Ok(books) => Ok(books.into()),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+    }
+}
 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let _ =::serde_json::to_writer(&File::create(path)?, &books)?;
@@ -137,6 +149,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
+    use crate::interest::{self, InterestInfo, InterestTerms, InterestType};
     use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use tempfile::NamedTempFile;
     use super::{Books, load_books};
@@ -195,6 +208,18 @@ mod tests {
             percentage: Decimal::new(3, 2),
         };
         let _ = books.add_modifier(m);
+        let interest_terms = InterestTerms::from_components(
+            date,
+            None,
+            Decimal::new(5, 2),            
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Monthly interest".to_string(),
+            None,
+        );
+        books.add_interest_info(InterestInfo::from_components(Some(date), vec![interest_terms], id1));   
         books
    }
 
@@ -219,6 +244,7 @@ mod tests {
         let books = build_books();
         let tmp_file = NamedTempFile::new().expect("create temp file");
         let filepath = tmp_file.path();
+        println!("File path: {:?}", filepath);
 
         let _ = save_books(filepath, &books);
 
@@ -253,6 +279,19 @@ mod tests {
         assert_eq!(2, books.transactions().len());
         assert_eq!(0, books.modifiers().len());
         
+    }
+    
+    #[test]
+   fn test_load_books_v0_0_5() {
+        let filepath = "src/previous_versions/books_v0.0.5.json";
+
+        let result = load_books(filepath);
+        let books = result.unwrap();
+        assert_eq!(2, books.accounts().len());
+        assert_eq!(1, books.schedules().len());
+        assert_eq!(2, books.transactions().len());
+        assert_eq!(1, books.modifiers().len());        
+        assert_eq!(0, books.interest_infos().len());        
     }
 
     #[test]
