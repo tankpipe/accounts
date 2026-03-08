@@ -208,9 +208,8 @@ mod tests {
             percentage: Decimal::new(3, 2),
         };
         let _ = books.add_modifier(m);
-        let interest_terms = InterestTerms::from_components(
+        let interest_terms = InterestTerms::simple(
             date,
-            None,
             Decimal::new(5, 2),            
             InterestType::Daily,
             ScheduleEnum::Months,
