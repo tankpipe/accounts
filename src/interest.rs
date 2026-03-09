@@ -94,8 +94,8 @@ impl InterestInfo {
         }
     }
 
-    pub fn get_terms_for_date(&self, date: NaiveDate) -> Option<&InterestTerms> {
-        self.terms.iter().find(|t| t.start_date <= date && t.end_date.map_or(true, |end| end >= date))
+    pub fn get_terms_for_date(&self, date: NaiveDate) -> Vec<&InterestTerms> {
+        self.terms.iter().filter(|t| t.start_date <= date && t.end_date.map_or(true, |end| end >= date)).collect()
     }
 }
 
@@ -133,7 +133,7 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
     
     let mut cur_entry = next_entry;
     let mut interest_paid = dec!(0);
-    let mut monthly_interest_tally = dec!(0);
+    let mut interest_tally_by_account: std::collections::HashMap<Uuid, Decimal> = std::collections::HashMap::new();
     let mut cur_date = start_date;
     let mut balance = starting_balance;    
     let mut cur_index  = start_index.unwrap_or(account_entries.len());
@@ -157,29 +157,40 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
 
         cur_terms = interest_info.get_terms_for_date(cur_date);
 
-        if let Some(terms) = cur_terms {
+        for terms in cur_terms {            
             let daily_rate = terms.rate / dec!(365);
             let min_balance = terms.min_balance.unwrap_or(dec!(0));
                         
-            if balance > min_balance {
-                if terms.max_balance.is_some() && (balance + interest_paid) > terms.max_balance.unwrap() {
-                    monthly_interest_tally += daily_rate * (terms.max_balance.unwrap());
+            if balance >= min_balance {
+                let interest_amount: Decimal;
+                if terms.max_balance.is_some() && (balance + interest_paid) >= terms.max_balance.unwrap() {
+                    interest_amount = daily_rate * (terms.max_balance.unwrap() - min_balance);
                 } else {
-                    monthly_interest_tally += daily_rate * (balance + interest_paid);
+                    interest_amount = daily_rate * (balance + interest_paid - min_balance);
                 }
-            } 
 
-            if is_end_of_month(cur_date) {           
-                let interest_account: Option<Account> = if terms.interest_account_id.is_some() {
-                    Some(books.get_account(&terms.interest_account_id.unwrap())?) 
-                } else {
-                    None
-                };
-                let transaction = build_interest_transaction(&source_account, &interest_account, cur_date.succ_opt().unwrap(), monthly_interest_tally.round_dp(DECIMAL_PRECISION));
+                let current_balance = interest_tally_by_account.entry(terms.interest_account_id.unwrap()).or_insert(dec!(0));
+                let new_total = *current_balance + interest_amount;
+                *current_balance = new_total;
+
+                //println!("{}, {}, Interest amount: {}, tally {}", cur_date, balance, interest_amount, new_total);
+            } 
+            
+        }
+
+        if is_end_of_month(cur_date) {      
+
+            let account_ids: Vec<Uuid> = interest_tally_by_account.keys().copied().collect();
+            
+            for account_id in account_ids {
+                let balance = interest_tally_by_account.get(&account_id).unwrap();
+                let interest_account = books.get_account(&account_id)?;
+                let transaction = build_interest_transaction(&source_account, &Some(interest_account.clone()), cur_date.succ_opt().unwrap(), balance.round_dp(DECIMAL_PRECISION));
                 transactions.push(transaction);
-                interest_paid += monthly_interest_tally.round_dp(DECIMAL_PRECISION);
-                monthly_interest_tally = dec!(0);
+                interest_paid += balance.round_dp(DECIMAL_PRECISION);
+                interest_tally_by_account.insert(account_id, dec!(0));
             }
+            
         }
                 
         cur_date = cur_date.checked_add_days(Days::new(1)).unwrap();
@@ -522,15 +533,15 @@ mod tests {
         assert_eq!(transactions[0].entries.len(), 2);
         assert_eq!(transactions[0].entries[0].account_id, savings_account.id);
         assert_eq!(transactions[0].entries[1].account_id, interest_earned.id);
-        assert_eq!(transactions[0].entries[0].amount, dec!(42.47));
+        assert_eq!(transactions[0].entries[0].amount, dec!(4.25));
         assert_eq!(transactions[0].entries[0].entry_type, Side::Debit);
-        assert_eq!(transactions[0].entries[1].amount, dec!(42.47));
+        assert_eq!(transactions[0].entries[1].amount, dec!(4.25));
         assert_eq!(transactions[0].entries[1].entry_type, Side::Credit);
         assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
         assert_eq!(transactions[0].entries[1].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
 
-        assert_eq!(transactions[1].entries[0].amount, dec!(19.18));
-        assert_eq!(transactions[1].entries[1].amount, dec!(19.18));
+        assert_eq!(transactions[1].entries[0].amount, dec!(1.92));
+        assert_eq!(transactions[1].entries[1].amount, dec!(1.92));
         assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
         assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
     }
@@ -587,15 +598,15 @@ mod tests {
         assert_eq!(transactions[0].entries.len(), 2);
         assert_eq!(transactions[0].entries[0].account_id, savings_account.id);
         assert_eq!(transactions[0].entries[1].account_id, interest_earned.id);
-        assert_eq!(transactions[0].entries[0].amount, dec!(54.29));
+        assert_eq!(transactions[0].entries[0].amount, dec!(43.55));
         assert_eq!(transactions[0].entries[0].entry_type, Side::Debit);
-        assert_eq!(transactions[0].entries[1].amount, dec!(54.29));
+        assert_eq!(transactions[0].entries[1].amount, dec!(43.55));
         assert_eq!(transactions[0].entries[1].entry_type, Side::Credit);
         assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
         assert_eq!(transactions[0].entries[1].date, NaiveDate::from_ymd_opt(2022, 2, 1).unwrap());
 
-        assert_eq!(transactions[1].entries[0].amount, dec!(37.29));
-        assert_eq!(transactions[1].entries[1].amount, dec!(37.29));
+        assert_eq!(transactions[1].entries[0].amount, dec!(35.97));
+        assert_eq!(transactions[1].entries[1].amount, dec!(35.97));
         assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
         assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
     }
