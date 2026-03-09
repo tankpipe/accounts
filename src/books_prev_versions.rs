@@ -3,7 +3,7 @@ use chrono::{NaiveDate};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use crate::{account::{Account, Transaction}, books::{Books, Settings}, schedule::{ScheduleEntry, ScheduleEnum}, scheduler::Scheduler};
+use crate::{account::{Account, Entry, Source, Transaction, TransactionStatus}, books::{Books, Settings}, schedule::{ScheduleEntry, ScheduleEnum}, scheduler::Scheduler};
 use crate::schedule::{Schedule};
 use crate::serializer::*;
 
@@ -18,7 +18,7 @@ pub struct BooksV005 {
     pub version: String,
     pub accounts: HashMap<Uuid, Account>,
     pub scheduler: Scheduler,
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<TransactionV005>,
     pub settings: Settings,
 }
 
@@ -30,10 +30,31 @@ impl Into<Books> for BooksV005 {
             VERSION.to_string(),
             self.accounts,
             self.scheduler,
-            self.transactions,
+            self.transactions.into_iter().map(|t| t.into()).collect(),
             HashMap::new(),   
             self.settings,  
         )
+    }
+}
+
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TransactionV005 {
+    pub id: Uuid,
+    pub entries: Vec<Entry>,
+    pub status: TransactionStatus,    
+    pub schedule_id: Option<Uuid>,
+}
+
+impl Into<Transaction> for TransactionV005 {
+    fn into(self) -> Transaction {
+        Transaction {
+            id: self.id,
+            entries: self.entries,
+            status: self.status,
+            source_type: if self.schedule_id.is_some() { Some(Source::Schedule) } else { None },
+            source_id: self.schedule_id,
+        }
     }
 }
 
@@ -44,7 +65,7 @@ pub struct BooksV004 {
     pub version: String,
     pub accounts: HashMap<Uuid, Account>,
     pub scheduler: SchedulerV004,
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<TransactionV005>,
     pub settings: Settings,
 }
 
@@ -56,7 +77,7 @@ impl Into<Books> for BooksV004 {
             VERSION.to_string(),
             self.accounts,
             self.scheduler.into(),
-            self.transactions,
+            self.transactions.into_iter().map(|t| t.into()).collect(),
             HashMap::new(),   
             self.settings,  
         )

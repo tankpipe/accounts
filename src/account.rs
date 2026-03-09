@@ -30,12 +30,19 @@ pub enum TransactionStatus {
     Recorded,
 }
 
+#[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub enum Source {
+    Schedule,
+    Interest,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Transaction {
     pub id: Uuid,
     pub entries: Vec<Entry>,
-    pub status: TransactionStatus,
-    pub schedule_id: Option<Uuid>,
+    pub status: TransactionStatus,    
+    pub source_type: Option<Source>,    
+    pub source_id: Option<Uuid>,
 }
 
 impl Transaction {
@@ -82,6 +89,17 @@ impl Transaction {
         } 
         false
     }
+
+    pub fn set_source_schedule(&mut self, schedule_id: Uuid) {
+        self.source_type = Some(Source::Schedule);
+        self.source_id = Some(schedule_id);
+    }
+
+    pub fn set_source_interest(&mut self, interest_info_id: Uuid) {
+        self.source_type = Some(Source::Interest);
+        self.source_id = Some(interest_info_id);
+    }
+
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -276,7 +294,8 @@ mod tests {
             id: transaction_id,
             entries: [].to_vec(),
             status: TransactionStatus::Recorded,
-            schedule_id: None,
+            source_type: None,
+            source_id: None,
         };
         t.entries.push(build_entry(
             transaction_id,
@@ -354,7 +373,8 @@ mod tests {
                 dec!(100),
             )],
             status: TransactionStatus::Recorded,
-            schedule_id: None,
+            source_type: None,
+            source_id: None,
         };
 
         assert_eq!(Some(date), t.date());
@@ -367,7 +387,8 @@ mod tests {
             id: transaction_id,
             entries: vec![],
             status: TransactionStatus::Recorded,
-            schedule_id: None,
+            source_type: None,
+            source_id: None,
         };
 
         assert!(t.date().is_none());

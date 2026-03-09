@@ -234,7 +234,8 @@ mod tests {
                         amount,balance:None, reconciled_status: None},
                 ],
                 status: TransactionStatus::Recorded,
-                schedule_id: None
+                source_type: None,
+                source_id: None,
             };
         t1
     }

@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::account::{Account, Entry, ReconciledStatus, Transaction, TransactionStatus};
+use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::InterestInfo;
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
@@ -451,7 +451,7 @@ impl Books {
         }
 
         // Check if any transactions reference this schedule
-        if self.transactions.iter().any(|t| t.schedule_id == Some(*id)) {
+        if self.transactions.iter().any(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(*id)}) {
             return Err(BooksError::from_str(format!("Schedule {} can not be deleted as it has transactions.", id).as_str()));
         }
 
@@ -473,7 +473,7 @@ impl Books {
     pub fn transactions_by_schedule(&self, schedule_id: Uuid, status: Option<TransactionStatus>) -> Vec<Transaction> {
         self.transactions
             .iter()
-            .filter(|t| t.schedule_id == Some(schedule_id))
+            .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
             .filter(|t| {
                 match status {
                     Some(filter_status) => t.status == filter_status,
@@ -571,7 +571,7 @@ impl Books {
     pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Option<NaiveDate> {
         let mut transactions: Vec<Transaction> = self.transactions
             .iter()
-            .filter(|t| t.schedule_id == Some(schedule_id))
+            .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
             .map(|t| t.clone())
             .collect();
         
@@ -1965,7 +1965,8 @@ mod tests {
                 })
                 .collect(),
             status: t.status,
-            schedule_id: None,
+            source_type: None,
+            source_id: None,
         }
     }
 
@@ -2067,7 +2068,7 @@ mod tests {
         
         // Verify transactions were created with schedule_id
         assert!(books.transactions().len() > 0);
-        assert!(books.transactions().iter().any(|t| t.schedule_id == Some(st1_id)));
+        assert!(books.transactions().iter().any(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(st1_id)}));
 
         // Try to delete the schedule - should fail
         let result = books.delete_schedule(&st1_id);
@@ -2156,7 +2157,8 @@ mod tests {
             id: transaction_id,
             entries: Vec::new(),
             status: TransactionStatus::Recorded,
-            schedule_id: None
+            source_type: None,
+            source_id: None,
         };
 
         if dr_account_id.is_some() {
@@ -2216,16 +2218,16 @@ mod tests {
         
         // Create some transactions for this schedule
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
-        let mut t1_with_schedule = t1;
-        t1_with_schedule.schedule_id = Some(schedule_id);
+        let mut t1_with_schedule = t1;        
+        t1_with_schedule.set_source_schedule(schedule_id);
         
         let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 7, 4).unwrap());
         let mut t2_with_schedule = t2;
-        t2_with_schedule.schedule_id = Some(schedule_id);
+        t2_with_schedule.set_source_schedule(schedule_id);
         
         let t3 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 8, 4).unwrap());
         let mut t3_with_schedule = t3;
-        t3_with_schedule.schedule_id = Some(schedule_id);
+        t3_with_schedule.set_source_schedule(schedule_id);
         
         // Add transactions out of order to test that sorting finds the latest date
         books.add_transaction(t3_with_schedule).unwrap(); // August 4
@@ -2280,12 +2282,12 @@ mod tests {
         // Create transactions for schedule1
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut t1_with_schedule = t1;
-        t1_with_schedule.schedule_id = Some(schedule1_id);
+        t1_with_schedule.set_source_schedule(schedule1_id);
         
         // Create transactions for schedule2 (later date)
         let t2 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 8, 4).unwrap());
         let mut t2_with_schedule = t2;
-        t2_with_schedule.schedule_id = Some(schedule2_id);
+        t2_with_schedule.set_source_schedule(schedule2_id);
         
         // Add transactions
         books.add_transaction(t1_with_schedule).unwrap();
@@ -2330,7 +2332,7 @@ mod tests {
         // Create a transaction after the existing last_date
         let t1 = build_transaction_with_date(Some(id1), Some(id2), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let mut t1_with_schedule = t1;
-        t1_with_schedule.schedule_id = Some(schedule_id);
+        t1_with_schedule.set_source_schedule(schedule_id);
         
         books.add_transaction(t1_with_schedule).unwrap();
         

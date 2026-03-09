@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
-use crate::account::{Entry, TransactionStatus};
+use crate::account::{Entry, Source, TransactionStatus};
 use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
 
@@ -159,7 +159,8 @@ impl Scheduler {
                         id: transaction_id,
                         entries: entries,
                         status: TransactionStatus::Projected,
-                        schedule_id: Some(schedule.id),
+                        source_type: Some(Source::Schedule),
+                        source_id: Some(schedule.id),
                     };
 
                     schedule.last_date = Some(next_date);

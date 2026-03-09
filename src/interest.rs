@@ -206,7 +206,8 @@ fn build_interest_transaction(source_account: &Account, interest_account: &Optio
         id: transaction_id,
         entries: vec![],
         status: TransactionStatus::Projected,
-        schedule_id: None,
+        source_type: None,
+        source_id: None,
     };
     if is_interest_bearing || interest_account.as_ref().is_some() {
         transaction.entries.push(Entry{
@@ -619,7 +620,8 @@ mod tests {
             id: transaction_id,
             entries: Vec::new(),
             status: TransactionStatus::Recorded,
-            schedule_id: None,            
+            source_type: None,
+            source_id: None,
         };
 
         if dr_account_id.is_some() {
