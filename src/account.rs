@@ -95,9 +95,9 @@ impl Transaction {
         self.source_id = Some(schedule_id);
     }
 
-    pub fn set_source_interest(&mut self, interest_info_id: Uuid) {
+    pub fn set_source_interest(&mut self, interest_id: Uuid) {
         self.source_type = Some(Source::Interest);
-        self.source_id = Some(interest_info_id);
+        self.source_id = Some(interest_id);
     }
 
 }
@@ -209,7 +209,7 @@ pub struct Account {
     pub balance: Decimal,
     pub starting_balance: Decimal,
     pub reconciliation_info: Option<ReconciliationInfo>,    
-    pub interest_info_id: Option<Uuid>,
+    pub interest_id: Option<Uuid>,
 }
 
 impl Account {
@@ -221,7 +221,7 @@ impl Account {
             balance: dec!(0),
             starting_balance: dec!(0),
             reconciliation_info: None,  
-            interest_info_id: None,
+            interest_id: None,
         };
     }
 

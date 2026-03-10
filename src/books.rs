@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
-use crate::interest::InterestInfo;
+use crate::interest::Interest;
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -74,7 +74,7 @@ pub struct Books {
     accounts: HashMap<Uuid, Account>,
     scheduler: Scheduler,
     transactions: Vec<Transaction>,
-    interest_infos: HashMap<Uuid, InterestInfo>,
+    interests: HashMap<Uuid, Interest>,
     pub settings: Settings,
 }
 
@@ -103,12 +103,12 @@ impl Books {
             version: VERSION.to_string(),
             accounts: HashMap::new(),
             scheduler: Scheduler::build_empty(), transactions: Vec::new(),
-            interest_infos: HashMap::new(),
+            interests: HashMap::new(),
             settings: Settings{ require_double_entry: false },
         }
     }
 
-    pub fn with_components(id: Uuid, name: String, version: String, accounts: HashMap<Uuid, Account>, scheduler: Scheduler, transactions: Vec<Transaction>, interest_infos: HashMap<Uuid, InterestInfo>, settings: Settings) -> Books {
+    pub fn with_components(id: Uuid, name: String, version: String, accounts: HashMap<Uuid, Account>, scheduler: Scheduler, transactions: Vec<Transaction>, interests: HashMap<Uuid, Interest>, settings: Settings) -> Books {
         Books {
             id,
             name,
@@ -116,7 +116,7 @@ impl Books {
             accounts,
             scheduler,
             transactions,
-            interest_infos,
+            interests,
             settings,
         }
     }
@@ -524,48 +524,48 @@ impl Books {
         self.scheduler.get_modifier(modifier_id).map(|m| m.clone())
     }
 
-    pub fn add_interest_info(&mut self, interest_info: InterestInfo) -> Result<(), BooksError> {
-        if !self.accounts.contains_key(&interest_info.account_id) {
-            return Err(BooksError::from_str(format!("Account {} not found.", interest_info.account_id).as_str()));
+    pub fn add_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
+        if !self.accounts.contains_key(&interest.account_id) {
+            return Err(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()));
         }
         
         // Update the account to reference this interest info
-        if let Some(account) = self.accounts.get_mut(&interest_info.account_id) {
-            account.interest_info_id = Some(interest_info.account_id);
+        if let Some(account) = self.accounts.get_mut(&interest.account_id) {
+            account.interest_id = Some(interest.account_id);
         }
         
-        self.interest_infos.insert(interest_info.account_id, interest_info);
+        self.interests.insert(interest.account_id, interest);
         Ok(())
     }
 
-    pub fn get_interest_info(&self, interest_info_id: &Uuid) -> Result<InterestInfo, BooksError> {
-        self.interest_infos.get(interest_info_id)
+    pub fn get_interest(&self, interest_id: &Uuid) -> Result<Interest, BooksError> {
+        self.interests.get(interest_id)
             .cloned()
-            .ok_or(BooksError::from_str(format!("Interest info not found for ID {}", interest_info_id).as_str()))
+            .ok_or(BooksError::from_str(format!("Interest info not found for ID {}", interest_id).as_str()))
     }
 
-    pub fn update_interest_info(&mut self, interest_info: InterestInfo) -> Result<(), BooksError> {
-        if !self.accounts.contains_key(&interest_info.account_id) {
-            return Err(BooksError::from_str(format!("Account {} not found.", interest_info.account_id).as_str()));
+    pub fn update_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
+        if !self.accounts.contains_key(&interest.account_id) {
+            return Err(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()));
         }
         
         // Get the account to check if it has interest info
-        let account = self.accounts.get(&interest_info.account_id)
-            .ok_or(BooksError::from_str(format!("Account {} not found.", interest_info.account_id).as_str()))?;
+        let account = self.accounts.get(&interest.account_id)
+            .ok_or(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()))?;
         
-        if let Some(interest_info_id) = account.interest_info_id {
+        if let Some(interest_id) = account.interest_id {
             // Update existing interest info
-            self.interest_infos.insert(interest_info_id, interest_info);
+            self.interests.insert(interest_id, interest);
         } else {
             // Account doesn't have interest info yet, add it
-            self.add_interest_info(interest_info)?;
+            self.add_interest(interest)?;
         }
         
         Ok(())
     }
 
-    pub fn interest_infos(&self) -> Vec<&InterestInfo> {
-        self.interest_infos.values().collect()
+    pub fn interests(&self) -> Vec<&Interest> {
+        self.interests.values().collect()
     }
 
     pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Option<NaiveDate> {

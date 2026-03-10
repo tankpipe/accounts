@@ -75,7 +75,7 @@ impl InterestTerms {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct InterestInfo  {
+pub struct Interest  {
     pub id: Uuid,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
@@ -84,9 +84,9 @@ pub struct InterestInfo  {
     pub account_id: Uuid,
 }
 
-impl InterestInfo {
+impl Interest {
     pub fn from_components(paid_to_date: Option<NaiveDate>, terms: Vec<InterestTerms>, account_id: Uuid) -> Self {
-        InterestInfo {
+        Interest {
             id: Uuid::new_v4(),
             paid_to_date,
             terms,
@@ -103,16 +103,16 @@ impl InterestInfo {
     }
 }
 
-pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: NaiveDate) -> Result<Vec<Transaction>, BooksError> {    
-    if interest_info.terms.is_empty() {
+pub fn calculate_interest(books: &Books, interest: Interest, to_date: NaiveDate) -> Result<Vec<Transaction>, BooksError> {    
+    if interest.terms.is_empty() {
         return Ok(Vec::new());
     }
     
     let mut transactions: Vec<Transaction> = Vec::new();
-    let source_account = books.get_account(&interest_info.account_id)?;
+    let source_account = books.get_account(&interest.account_id)?;
     
-    let start_date = interest_info.paid_to_date.map_or_else(
-        || interest_info.get_start_date().unwrap().clone(),
+    let start_date = interest.paid_to_date.map_or_else(
+        || interest.get_start_date().unwrap().clone(),
         |date| date.checked_add_days(Days::new(1)).unwrap()
     );
     let account_entries = books.account_entries(source_account.id)?;
@@ -163,7 +163,7 @@ pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: N
             }
         }
 
-        cur_terms = interest_info.get_terms_for_date(cur_date);
+        cur_terms = interest.get_terms_for_date(cur_date);
 
         for terms in cur_terms {            
             let daily_rate = terms.rate / dec!(365);
@@ -265,7 +265,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::Books, interest::{InterestInfo, InterestTerms, InterestType, calculate_interest}, schedule::ScheduleEnum};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books::Books, interest::{Interest, InterestTerms, InterestType, calculate_interest}, schedule::ScheduleEnum};
 
     #[test]    
     fn calculate_loan_interest_daily() {
@@ -296,8 +296,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_paid.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
         assert_eq!(transactions[0].entries.len(), 2);
@@ -335,8 +335,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], loan_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 12);
         assert_eq!(transactions[0].entries.len(), 2);        
@@ -384,8 +384,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
         assert_eq!(transactions[0].entries.len(), 2);
@@ -432,8 +432,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 1);
         assert_eq!(transactions[0].entries.len(), 2);
@@ -482,8 +482,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms_1, interest_terms_2], savings_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms_1, interest_terms_2], savings_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 12, 31).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 12);
         assert_eq!(transactions[0].entries.len(), 2);
@@ -535,8 +535,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![interest_terms], savings_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
         assert_eq!(transactions[0].entries.len(), 2);
@@ -600,8 +600,8 @@ mod tests {
             "Interest payment".to_string(),
             Some(interest_earned.id)
         );
-        let interest_info = InterestInfo::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![tier_1_terms, tier_2_terms], savings_account.id);        
-        let transactions = calculate_interest(&books, interest_info, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
+        let interest = Interest::from_components(Some(NaiveDate::from_ymd_opt(2021, 12, 31).unwrap()), vec![tier_1_terms, tier_2_terms], savings_account.id);        
+        let transactions = calculate_interest(&books, interest, NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()).unwrap();
 
         assert_eq!(transactions.len(), 2);
         assert_eq!(transactions[0].entries.len(), 2);
