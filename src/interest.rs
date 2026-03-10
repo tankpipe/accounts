@@ -97,14 +97,22 @@ impl InterestInfo {
     pub fn get_terms_for_date(&self, date: NaiveDate) -> Vec<&InterestTerms> {
         self.terms.iter().filter(|t| t.start_date <= date && t.end_date.map_or(true, |end| end >= date)).collect()
     }
+
+    pub fn get_start_date(&self) -> Option<&NaiveDate> {
+        self.terms.iter().min_by(|t1, t2| t1.start_date.cmp(&t2.start_date)).map(|t| &t.start_date)
+    }
 }
 
 pub fn calculate_interest(books: &Books, interest_info: InterestInfo, to_date: NaiveDate) -> Result<Vec<Transaction>, BooksError> {    
+    if interest_info.terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    
     let mut transactions: Vec<Transaction> = Vec::new();
     let source_account = books.get_account(&interest_info.account_id)?;
     
     let start_date = interest_info.paid_to_date.map_or_else(
-        || interest_info.terms[0].start_date,
+        || interest_info.get_start_date().unwrap().clone(),
         |date| date.checked_add_days(Days::new(1)).unwrap()
     );
     let account_entries = books.account_entries(source_account.id)?;
