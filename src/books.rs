@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
-use crate::interest::Interest;
+use crate::interest::{Interest, calculate_interest_for_accounts};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -531,10 +531,10 @@ impl Books {
         
         // Update the account to reference this interest info
         if let Some(account) = self.accounts.get_mut(&interest.account_id) {
-            account.interest_id = Some(interest.account_id);
+            account.interest_id = Some(interest.id);
         }
         
-        self.interests.insert(interest.account_id, interest);
+        self.interests.insert(interest.id, interest);
         Ok(())
     }
 
@@ -827,9 +827,11 @@ impl Books {
         // Reconcile each transaction.
         for transaction_id in transaction_ids {
 
-            // find the index of transaction in account_transactions
-            //TODO: Fix unwrap check
-            let idx = account_transactions.iter().position(|t| t.id == transaction_id).unwrap();
+            let idx = account_transactions.iter().position(|t| t.id == transaction_id).ok_or_else(|| {
+                BooksError::from_str(
+                    format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
+                )
+            })?;
             
             let transaction = account_transactions.iter_mut().find(|t| t.id == transaction_id).ok_or_else(|| {
                 BooksError::from_str(
@@ -927,6 +929,15 @@ impl Books {
             None => return true
         }
     }
+
+    pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
+        println!("Running checks - projecting to: {}", projection_date);
+        let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
+        calculate_interest_for_accounts(self, interest_accounts, projection_date);        
+        println!("Checks completed ✅");
+        Ok(())
+    }
+    
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
