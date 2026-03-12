@@ -79,16 +79,16 @@ pub struct Interest  {
     pub id: Uuid,
     #[serde(serialize_with = "serialize_option_naivedate")]
     #[serde(deserialize_with = "deserialize_option_naivedate")]
-    pub paid_to_date: Option<NaiveDate>,
+    pub paid_to: Option<NaiveDate>,
     pub terms: Vec<InterestTerms>,
     pub account_id: Uuid,
 }
 
 impl Interest {
-    pub fn from_components(paid_to_date: Option<NaiveDate>, terms: Vec<InterestTerms>, account_id: Uuid) -> Self {
+    pub fn from_components(paid_to: Option<NaiveDate>, terms: Vec<InterestTerms>, account_id: Uuid) -> Self {
         Interest {
             id: Uuid::new_v4(),
-            paid_to_date,
+            paid_to,
             terms,
             account_id
         }
@@ -111,7 +111,7 @@ pub fn calculate_interest(books: &mut Books, mut interest: Interest, to_date: Na
     let mut transactions: Vec<Transaction> = Vec::new();
     let source_account = books.get_account(&interest.account_id)?;
     
-    let start_date = interest.paid_to_date.map_or_else(
+    let start_date = interest.paid_to.map_or_else(
         || interest.get_start_date().unwrap().clone(),
         |date| date.checked_add_days(Days::new(1)).unwrap()
     );
@@ -218,7 +218,8 @@ pub fn calculate_interest(books: &mut Books, mut interest: Interest, to_date: Na
         cur_date = cur_date.checked_add_days(Days::new(1)).unwrap();
     }
 
-    interest.paid_to_date = transactions.last().and_then(|t| t.date());
+    interest.paid_to = transactions.last().and_then(|t| t.date());
+    books.update_interest(interest)?;
 
     for t in transactions {
         println!("Adding interest transaction: {:?}", t);
@@ -288,7 +289,7 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
         for account in interest_accounts {
             if let Some(interest_id) = account.interest_id {
                 if let Ok(interest) = books.get_interest(&interest_id) {
-                    if interest.paid_to_date < Some(to_date) {
+                    if interest.paid_to < Some(to_date) {
                         accounts_to_process.push((account.id, interest.clone()));
                     }
                 }
