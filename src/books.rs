@@ -3,6 +3,13 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use rust_i18n::t;
+
+macro_rules! tr {
+    ($($tt:tt)*) => {
+        t!($($tt)*).to_string()
+    };
+}
 
 use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
@@ -133,7 +140,7 @@ impl Books {
         let existing = self
             .accounts
             .get(&account.id)
-            .ok_or_else(|| BooksError::from_str(format!("Account {} not found.", account.id).as_str()))?;
+            .ok_or_else(|| BooksError { error: tr!("errors.account_not_found", id => account.id) })?;
 
         let same_reconciliation = match (&account.reconciliation_info, &existing.reconciliation_info) {
             (None, None) => true,
@@ -144,21 +151,19 @@ impl Books {
         };
 
         if !same_reconciliation {
-            return Err(BooksError::from_str("Account reconciliation_info can not be modified."));
+            return Err(BooksError { error: tr!("errors.account_reconciliation_info_immutable") });
         }
 
         if account.account_type != existing.account_type
             && self.transactions.iter().any(|t| t.involves_account(&account.id))
         {
-            return Err(BooksError::from_str("Account type can not be modified once it has transactions."));
+            return Err(BooksError { error: tr!("errors.account_type_immutable_with_transactions") });
         }
 
         if account.starting_balance != existing.starting_balance
             && existing.reconciliation_info.is_some()
         {
-            return Err(BooksError::from_str(
-                "Account starting balance can not be modified once it has been reconciled.",
-            ));
+            return Err(BooksError { error: tr!("errors.account_starting_balance_immutable_after_reconciliation") });
         }
 
         self.accounts.insert(account.id, account);
@@ -167,11 +172,11 @@ impl Books {
 
     pub fn delete_account(&mut self, id: &Uuid) -> Result<(), BooksError> {
         if !self.accounts.contains_key(id) {
-            return Err(BooksError::from_str(format!("Account {} not found.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found", id => id) });
         }
 
         if self.transactions.iter().any(|t|t.involves_account(id)) {
-            return Err(BooksError::from_str(format!("Account {} can not be deleted as it has transactions.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_cannot_delete_with_transactions", id => id) });
         }
 
         self.accounts.remove(id);
@@ -179,7 +184,7 @@ impl Books {
     }
 
     pub fn get_account(&self, id: &Uuid) -> Result<Account, BooksError> {
-        self.accounts.get(id).cloned().ok_or(BooksError::from_str(format!("Account {} not found.", id).as_str()))
+        self.accounts.get(id).cloned().ok_or(BooksError { error: tr!("errors.account_not_found", id => id) })
     }
 
     pub fn accounts(&self) -> Vec<Account> {
@@ -212,25 +217,25 @@ impl Books {
 
         for e in transaction.entries.as_slice() {
             if !self.valid_account_id(Some(e.account_id)) {
-                return Some(Err(BooksError{ error: format!("Account not found for id: {}", e.account_id) }))
+                return Some(Err(BooksError{ error: tr!("errors.account_not_found_for_id_colon", id => e.account_id) }))
             }
         }
 
         if self.settings.require_double_entry && transaction.entries.len() < 2 {
-            return Some(Err(BooksError::from_str("A transaction needs at least two entries (double entry required is on).")))
+            return Some(Err(BooksError { error: tr!("errors.transaction_requires_two_entries") }))
         } else if transaction.entries.len() < 1 {
-            return Some(Err(BooksError::from_str("A transaction must have at least one entry")))
+            return Some(Err(BooksError { error: tr!("errors.transaction_requires_one_entry") }))
         }
 
         if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
-            return Some(Err(BooksError::from_str("Invalid Account")))
+            return Some(Err(BooksError { error: tr!("errors.invalid_account") }))
         }
 
         // Check that no account has more than one entry in the transaction.
         let mut account_ids = std::collections::HashSet::new();
         for entry in &transaction.entries {
             if !account_ids.insert(entry.account_id) {
-                return Some(Err(BooksError::from_str("An Account can only have one entry in a transaction")));
+                return Some(Err(BooksError { error: tr!("errors.transaction_single_entry_per_account") }));
             }
         }
         
@@ -241,7 +246,7 @@ impl Books {
                 if original_entry.is_reconciled_or_outstanding() {
                     let matching_entry = transaction.entries.iter().find(|e| e.account_id == original_entry.account_id);
                     if matching_entry.is_none() || matching_entry.unwrap() != original_entry {
-                        return Some(Err(BooksError::from_str("A reconciled or outstanding entry can not be modified")))
+                        return Some(Err(BooksError { error: tr!("errors.reconciled_entry_immutable") }))
                     }
                 }
             }
@@ -264,7 +269,7 @@ impl Books {
                 if let Some(account) = self.accounts.get(&entry.account_id) {
                     if let Some(reconciliation_info) = &account.reconciliation_info {
                         if reconciliation_info.date > entry.date {
-                            return Some(Err(BooksError::from_str("Transactions can not be added earlier than the account reconciliation date")));
+                            return Some(Err(BooksError { error: tr!("errors.transaction_before_reconciliation_date") }));
                         }
                     }
                 }
@@ -284,7 +289,7 @@ impl Books {
             let _old = std::mem::replace(&mut self.transactions[index], transaction);
             Ok(())
         } else {
-            Err(BooksError { error: "Transaction not found".to_string() })
+            Err(BooksError { error: tr!("errors.transaction_not_found") })
         }
 
     }
@@ -304,7 +309,7 @@ impl Books {
                 if let Some(index) = self.transactions.iter().position(|t| t.id == transaction_id) {
                     let _old = std::mem::replace(&mut self.transactions[index], transaction);
                 } else {
-                    return Err(BooksError { error: format!("Transaction {} not found", transaction_id).to_string() })
+                    return Err(BooksError { error: tr!("errors.transaction_not_found_no_period", id => transaction_id) })
                 }
             }
         }
@@ -318,14 +323,14 @@ impl Books {
 
             if let Some(transaction) = self.transactions.get(index) {
                 if transaction.entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
-                    return Err(BooksError::from_str("Can not delete a transaction with reconciled or outstanding entries"));
+                    return Err(BooksError { error: tr!("errors.cannot_delete_reconciled_transaction") });
                 }
             }
 
             self.transactions.remove(index);
             Ok(())
         } else {
-            return Err(BooksError::from_str(format!("Transaction {} not found.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.transaction_not_found_with_period", id => id) });
         }
     }
 
@@ -349,7 +354,7 @@ impl Books {
     /// Get a copy of the entries with balances for a given Account.
     pub fn account_entries(&self, account_id: Uuid) -> Result<Vec<Entry>, BooksError> {
         if !self.accounts.contains_key(&account_id) {
-            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found_for_id", id => account_id) });
         }
 
         let mut account_transactions: Vec<Transaction> =
@@ -387,7 +392,7 @@ impl Books {
     /// Get a copy of the transactions with balances for a given Account.
     pub fn account_transactions(&self, account_id: Uuid) -> Result<Vec<Transaction>, BooksError> {
         if !self.accounts.contains_key(&account_id) {
-            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found_for_id", id => account_id) });
         }
 
         let account_transactions: Vec<(usize, Transaction)> =
@@ -424,12 +429,12 @@ impl Books {
     fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
 
         if schedule.entries.len() < 1 {
-            return Some(Err(BooksError::from_str("A schedule must have at least one transaction entry")))
+            return Some(Err(BooksError { error: tr!("errors.schedule_requires_entry") }))
         }
 
         for e in schedule.entries.iter() {
             if !self.valid_account_id(Some(e.account_id)) {
-                return Some(Err(BooksError::from_str(format!("Invalid account: {}", e.account_id).as_str())))
+                return Some(Err(BooksError { error: tr!("errors.invalid_account_with_id", id => e.account_id) }))
             }
         }
 
@@ -447,12 +452,12 @@ impl Books {
     pub fn delete_schedule(&mut self, id: &Uuid) -> Result<(), BooksError> {
         // Check if schedule exists
         if !self.scheduler.schedules().iter().any(|s| s.id == *id) {
-            return Err(BooksError::from_str(format!("Schedule {} not found.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.schedule_not_found", id => id) });
         }
 
         // Check if any transactions reference this schedule
         if self.transactions.iter().any(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(*id)}) {
-            return Err(BooksError::from_str(format!("Schedule {} can not be deleted as it has transactions.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.schedule_cannot_delete_with_transactions", id => id) });
         }
 
         self.scheduler.delete_schedule(id)
@@ -510,7 +515,7 @@ impl Books {
     pub fn delete_modifier(&mut self, id: &Uuid) -> Result<(), BooksError> {
         // Check if modifier exists
         if !self.scheduler.modifiers().iter().any(|m| m.id == *id) {
-            return Err(BooksError::from_str(format!("Modifier {} not found.", id).as_str()));
+            return Err(BooksError { error: tr!("errors.modifier_not_found", id => id) });
         }
 
         self.scheduler.delete_modifier(id)
@@ -526,7 +531,7 @@ impl Books {
 
     pub fn add_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
         if !self.accounts.contains_key(&interest.account_id) {
-            return Err(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found", id => interest.account_id) });
         }
         
         // Update the account to reference this interest info
@@ -541,17 +546,17 @@ impl Books {
     pub fn get_interest(&self, interest_id: &Uuid) -> Result<Interest, BooksError> {
         self.interests.get(interest_id)
             .cloned()
-            .ok_or(BooksError::from_str(format!("Interest info not found for ID {}", interest_id).as_str()))
+            .ok_or(BooksError { error: tr!("errors.interest_info_not_found", id => interest_id) })
     }
 
     pub fn update_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
         if !self.accounts.contains_key(&interest.account_id) {
-            return Err(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found", id => interest.account_id) });
         }
         
         // Get the account to check if it has interest info
         let account = self.accounts.get(&interest.account_id)
-            .ok_or(BooksError::from_str(format!("Account {} not found.", interest.account_id).as_str()))?;
+            .ok_or(BooksError { error: tr!("errors.account_not_found", id => interest.account_id) })?;
         
         if let Some(interest_id) = account.interest_id {
             // Update existing interest info
@@ -815,7 +820,7 @@ impl Books {
     pub fn reconcile_account_transactions(&mut self, account_id: Uuid, transaction_ids: Vec<Uuid>) -> Result<(), BooksError> {
         println!("Reconciling account transactions for account {} transactions: {:?}", account_id, transaction_ids);
         if !self.accounts.contains_key(&account_id) {
-            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found_for_id", id => account_id) });
         }
 
         let mut account_transactions = self.account_transactions(account_id)?;
@@ -828,15 +833,11 @@ impl Books {
         for transaction_id in transaction_ids {
 
             let idx = account_transactions.iter().position(|t| t.id == transaction_id).ok_or_else(|| {
-                BooksError::from_str(
-                    format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
-                )
+                BooksError { error: tr!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id) }
             })?;
             
             let transaction = account_transactions.iter_mut().find(|t| t.id == transaction_id).ok_or_else(|| {
-                BooksError::from_str(
-                    format!("Transaction {} not found for account {}.", transaction_id, account_id).as_str(),
-                )
+                BooksError { error: tr!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id) }
             })?;
             
             self.reconcile_transaction(transaction.clone(), account_id, ReconciledStatus::Reconciled)?;
@@ -878,7 +879,7 @@ impl Books {
 
     pub fn rollback_reconciliation(&mut self, account_id: Uuid, to_date: NaiveDate) -> Result<(), BooksError> {
         if !self.accounts.contains_key(&account_id) {
-            return Err(BooksError::from_str(format!("Account not found for id {}", account_id).as_str()));
+            return Err(BooksError { error: tr!("errors.account_not_found_for_id", id => account_id) });
         }
 
         let account_transactions = self.account_transactions(account_id)?;
@@ -890,7 +891,7 @@ impl Books {
                 if entry.is_reconciled() && entry.date <= to_date {
                     last_reconciled_index = Some(idx);
                     let balance = entry.balance.ok_or_else(|| {
-                        BooksError::from_str("Reconciliation rollback requires balances.")
+                        BooksError { error: tr!("errors.reconciliation_rollback_requires_balances") }
                     })?;
                     last_reconciled_info = Some(crate::account::ReconciliationInfo {
                         date: entry.date,
@@ -1001,6 +1002,7 @@ mod tests {
     use uuid::Uuid;
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
+    use rust_i18n::t;
     use crate::account::*;
     use crate::books::{BooksError, ReconciliationItem, ReconciliationMatchStatus};
     use crate::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
@@ -1103,7 +1105,7 @@ mod tests {
         let t1 = build_transaction(None, Some(id1));
         books.add_transaction(t1).unwrap();
         let result = books.delete_account(&id1);
-        assert_eq!(format!("Account {} can not be deleted as it has transactions.", id1).as_str(), result.err().unwrap().error);
+        assert_eq!(tr!("errors.account_cannot_delete_with_transactions", id => id1), result.err().unwrap().error);
         assert!(books.accounts.get(&id1).is_some());
         assert!(books.accounts.get(&id2).is_some());
     }
@@ -1115,7 +1117,7 @@ mod tests {
         books.add_transaction(t1).unwrap();
         let id = &Uuid::new_v4();
         let result = books.delete_account(id);
-        assert_eq!(format!("Account {} not found.", id  ).as_str(), result.err().unwrap().error);
+        assert_eq!(tr!("errors.account_not_found", id => id), result.err().unwrap().error);
         assert!(books.accounts.get(&id1).is_some());
         assert!(books.accounts.get(&id2).is_some());
     }
@@ -1138,7 +1140,7 @@ mod tests {
         let mut t1 = build_transaction(Some(id1), Some(id2));
         t1.entries.pop();
         let result = books.add_transaction(t1);
-        assert_eq!("A transaction needs at least two entries (double entry required is on).".to_string(), result.err().unwrap().error);
+        assert_eq!(tr!("errors.transaction_requires_two_entries"), result.err().unwrap().error);
         assert_eq!(0, books.transactions.len());
     }
 
@@ -1150,7 +1152,7 @@ mod tests {
         t1.entries.pop();
         t1.entries.pop();
         let result = books.add_transaction(t1);
-        assert_eq!("A transaction must have at least one entry".to_string(), result.err().unwrap().error);
+        assert_eq!(tr!("errors.transaction_requires_one_entry"), result.err().unwrap().error);
         assert_eq!(0, books.transactions.len());
     }
 
@@ -1180,7 +1182,7 @@ mod tests {
         let (mut books, _, id2) = setup_books();
         let t1 = build_transaction(Some(Uuid::new_v4()), Some(id2));
         let _result = books.add_transaction(t1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        let expected: Result<(), BooksError> = Err(BooksError { error: tr!("errors.invalid_cr_account") });
         assert!(matches!(expected, _result));
         assert_eq!(0, (&books.transactions()).len());
     }
@@ -1190,7 +1192,7 @@ mod tests {
         let (mut books, id1, _) = setup_books();
         let t1 = build_transaction(Some(id1), Some(Uuid::new_v4()));
         let _result = books.add_transaction(t1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        let expected: Result<(), BooksError> = Err(BooksError { error: tr!("errors.invalid_cr_account") });
         assert!(matches!(expected, _result));
         assert_eq!(0, (&books.transactions()).len());
     }
@@ -1212,7 +1214,7 @@ mod tests {
         let t2 = build_transaction_with_date(Some(account1_id), Some(account2_id), early_date);
         let result = books.add_transaction(t2);
         assert!(result.is_err());
-        assert_eq!("Transactions can not be added earlier than the account reconciliation date", result.err().unwrap().error);
+        assert_eq!(tr!("errors.transaction_before_reconciliation_date"), result.err().unwrap().error);
     }
 
     #[test]
@@ -1238,7 +1240,7 @@ mod tests {
         let (mut books, _id1, _id2) = setup_books();
         let t1 = build_transaction(None, None);
         let _result = books.add_transaction(t1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "A transaction must have at least one account".to_string() });
+        let expected: Result<(), BooksError> = Err(BooksError { error: tr!("errors.transaction_requires_one_account") });
         assert!(matches!(expected, _result));
         assert_eq!(0, (&books.transactions()).len());
     }
@@ -1264,7 +1266,7 @@ mod tests {
 
         let id = &Uuid::new_v4();
         let result = books.delete_transaction(&id);
-        assert_eq!(format!("Transaction {} not found.", id  ).as_str(), result.err().unwrap().error);
+        assert_eq!(tr!("errors.transaction_not_found_with_period", id => id), result.err().unwrap().error);
         assert_eq!(1, books.transactions.len());
     }
 
@@ -2036,7 +2038,7 @@ mod tests {
         let (mut books, id1, id2) = setup_books();
         let st1 = build_schedule_std(id1, id2, NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let _result = books.add_schedule(st1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        let expected: Result<(), BooksError> = Err(BooksError { error: tr!("errors.invalid_cr_account") });
         assert!(matches!(expected, _result));
         assert_eq!(1, (&books.schedules()).len());
     }
@@ -2084,7 +2086,7 @@ mod tests {
         // Try to delete the schedule - should fail
         let result = books.delete_schedule(&st1_id);
         assert_eq!(
-            format!("Schedule {} can not be deleted as it has transactions.", st1_id).as_str(),
+            tr!("errors.schedule_cannot_delete_with_transactions", id => st1_id),
             result.err().unwrap().error
         );
         assert_eq!(1, books.schedules().len());
@@ -2099,7 +2101,7 @@ mod tests {
         let invalid_id = Uuid::new_v4();
         let result = books.delete_schedule(&invalid_id);
         assert_eq!(
-            format!("Schedule {} not found.", invalid_id).as_str(),
+            tr!("errors.schedule_not_found", id => invalid_id),
             result.err().unwrap().error
         );
         assert_eq!(1, books.schedules().len());
@@ -2121,7 +2123,7 @@ mod tests {
         let (mut books, id1, _) = setup_books();
         let st1 = build_schedule_std(id1, Uuid::new_v4(), NaiveDate::from_ymd_opt(2022, 6, 4).unwrap());
         let _result = books.add_schedule(st1);
-        let expected: Result<(), BooksError> = Err(BooksError { error: "Invalid CR account".to_string() });
+        let expected: Result<(), BooksError> = Err(BooksError { error: tr!("errors.invalid_cr_account") });
         assert!(matches!(expected, _result));
         assert_eq!(0, (&books.schedules()).len());
     }

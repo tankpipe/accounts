@@ -2,6 +2,13 @@
 use std::{path::Path, fs::File, io::Read};
 use std::{fs, io};
 use serde_json::Value;
+use rust_i18n::t;
+
+macro_rules! tr {
+    ($($tt:tt)*) => {
+        t!($($tt)*).to_string()
+    };
+}
 
 use crate::books::{Books, BooksError};
 use crate::account::Transaction;
@@ -114,7 +121,7 @@ pub fn file_exists<P: AsRef<Path>>(path: P) -> bool {
 pub fn delete_file<P: AsRef<Path>>(path: P) -> Result<(), BooksError> {
     match fs::remove_file(&path) {
         Ok(_) => Ok(()),
-        Err(e) => Err(BooksError{ error: format!("Error while deleting file: {:?} error: {:?}", path.as_ref(), e) })
+        Err(e) => Err(BooksError{ error: tr!("errors.file_delete_error", path => format!("{:?}", path.as_ref()), error => format!("{:?}", e)) })
     }
 }
 
@@ -132,8 +139,8 @@ pub fn save_new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), Boo
         Err(e) => {
             println!("Error creating file. Path: {:?} Error: {:?}", path.as_ref(), e);
             match e.kind() {            
-            io::ErrorKind::AlreadyExists => Err(BooksError::from_str("A file using this name already exists")),
-            _ => Err(BooksError{ error: format!("Error while creating file: {:?}", e) })
+            io::ErrorKind::AlreadyExists => Err(BooksError { error: tr!("errors.file_already_exists") }),
+            _ => Err(BooksError{ error: tr!("errors.file_create_error", error => format!("{:?}", e)) })
             }
         }
     }

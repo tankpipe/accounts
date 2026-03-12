@@ -15,6 +15,7 @@ rusty-money = { version = "0.5" }
 chrono = "0.4.31"
 chronoutil = "0.2.6"
 uuid = { version = "1.6", features = ["serde", "v4"] }
+rust-i18n = "3.0"
 
 [dev-dependencies]
 tempfile = "3"

@@ -4,6 +4,13 @@ use uuid::Uuid;
 use crate::account::{Entry, Source, TransactionStatus};
 use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
+use rust_i18n::t;
+
+macro_rules! tr {
+    ($($tt:tt)*) => {
+        t!($($tt)*).to_string()
+    };
+}
 
 use crate::{account::{Transaction}, books::BooksError};
 
@@ -41,7 +48,7 @@ impl Scheduler {
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
             Ok(&self.schedules[index])
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(BooksError { error: tr!("errors.schedule_not_found_simple") })
         }
 
     }
@@ -52,7 +59,7 @@ impl Scheduler {
             let _old = std::mem::replace(&mut self.schedules[index], schedule);
             Ok(())
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(BooksError { error: tr!("errors.schedule_not_found_simple") })
         }
 
     }
@@ -62,7 +69,7 @@ impl Scheduler {
             self.schedules.remove(index);
             Ok(())
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(BooksError { error: tr!("errors.schedule_not_found_simple") })
         }
     }
 
@@ -78,7 +85,7 @@ impl Scheduler {
         if let Some(modifier) = self.modifiers.get(&modifier_id) {
             Ok(modifier)
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(BooksError { error: tr!("errors.modifier_not_found_simple") })
         }
     }
 
@@ -86,7 +93,7 @@ impl Scheduler {
         if self.modifiers.insert(modifier.id, modifier).is_some() {
             Ok(())
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(BooksError { error: tr!("errors.modifier_not_found_simple") })
         }        
     }
 
@@ -94,7 +101,7 @@ impl Scheduler {
         if self.modifiers.remove(id).is_some() {
             Ok(())
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(BooksError { error: tr!("errors.modifier_not_found_simple") })
         }
     }
 
