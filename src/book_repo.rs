@@ -203,7 +203,7 @@ pub fn export_to_csv<P: AsRef<Path>>(
 pub fn export_accounts_to_csv<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let mut csv = String::new();
     csv.push_str(
-        "account_id,name,account_type,starting_balance,balance\n"
+        "account_id,name,account_type,starting_balance\n"
     );
 
     for account in books.accounts() {
@@ -213,7 +213,6 @@ pub fn export_accounts_to_csv<P: AsRef<Path>>(path: P, books: &Books) -> io::Res
             account.name,
             format!("{:?}", account.account_type),
             format_decimal_2(account.starting_balance),
-            format_decimal_2(account.balance),
         ];
 
         for (idx, field) in fields.iter().enumerate() {
