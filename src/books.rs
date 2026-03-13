@@ -930,7 +930,10 @@ impl Books {
     pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
         println!("Running checks - projecting to: {}", projection_date);
         let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
-        calculate_interest_for_accounts(self, interest_accounts, projection_date);        
+        println!("Calculating interest...");
+        calculate_interest_for_accounts(self, interest_accounts, projection_date);                
+        println!("Generating schedules...");
+        self.generate(projection_date);
         println!("Checks completed ✅");
         Ok(())
     }

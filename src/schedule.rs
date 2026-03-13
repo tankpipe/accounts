@@ -91,10 +91,6 @@ pub fn calculate_next_date(
             result = new_date.checked_add_signed(Duration::days(1));
         }
     }
-    println!(
-        "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
-        prev_date, new_date, start_date
-    );
     new_date
 }
 
