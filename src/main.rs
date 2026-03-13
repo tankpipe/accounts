@@ -1,6 +1,6 @@
 use std::env;
 
-use accounts::book_repo::load_books;
+use accounts::books_repo::load_books;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

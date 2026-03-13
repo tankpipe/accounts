@@ -294,7 +294,7 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::interest::{Interest, InterestTerms, InterestType};
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{export_to_csv, save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books_repo::{export_to_csv, save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use tempfile::NamedTempFile;
     use super::{Books, load_books};
 
