@@ -1,11 +1,14 @@
 #![allow(dead_code)]
 use std::{path::Path, fs::File, io::Read};
 use std::{fs, io};
+use std::collections::HashMap;
+use std::io::Write;
 use serde_json::Value;
 use crate::books_error;
+use rust_decimal::Decimal;
 
 use crate::books::{Books, BooksError};
-use crate::account::Transaction;
+use crate::account::{Transaction, Side};
 use crate::books_prev_versions::{BooksV004, BooksV005};
 use uuid::Uuid;
 
@@ -59,15 +62,22 @@ pub enum TransactionSortOrder {
 }
 
 /// Sort imported transactions by account entry date while preserving original order for same-day items.
+/// If `account_id` is `None`, sorts by transaction date.
 pub fn sort_transactions_for_account(
     transactions: &mut Vec<Transaction>,
-    account_id: Uuid,
+    account_id: Option<Uuid>,
     order: TransactionSortOrder,
 ) {
     let mut indexed: Vec<(usize, Transaction)> = transactions.drain(..).enumerate().collect();
     indexed.sort_by(|(a_idx, a_txn), (b_idx, b_txn)| {
-        let a_date = a_txn.find_entry_by_account(&account_id).map(|e| e.date);
-        let b_date = b_txn.find_entry_by_account(&account_id).map(|e| e.date);
+        let a_date = match account_id {
+            Some(id) => a_txn.find_entry_by_account(&id).map(|e| e.date),
+            None => a_txn.date(),
+        };
+        let b_date = match account_id {
+            Some(id) => b_txn.find_entry_by_account(&id).map(|e| e.date),
+            None => b_txn.date(),
+        };
 
         let date_cmp = match (a_date, b_date) {
             (Some(a), Some(b)) => a.cmp(&b),
@@ -106,6 +116,140 @@ fn load_previous_version_0_0_4(mut content: String) -> Result<Books, io::Error> 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let _ =::serde_json::to_writer(&File::create(path)?, &books)?;
     Ok(())
+}
+
+pub fn export_to_csv<P: AsRef<Path>>(
+    path: P,
+    books: &Books,
+    account_id: Option<Uuid>,
+) -> io::Result<()> {
+    let mut transactions: Vec<Transaction> = match account_id {
+        Some(id) => books
+            .account_transactions(id)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.error))?,
+        None => books.transactions().iter().cloned().collect(),
+    };
+    sort_transactions_for_account(
+        &mut transactions,
+        account_id,
+        TransactionSortOrder::OldestFirst,
+    );
+
+    let accounts_by_id: HashMap<Uuid, _> = books
+        .accounts()
+        .into_iter()
+        .map(|account| (account.id, account))
+        .collect();
+
+    let mut csv = String::new();
+    csv.push_str(
+        "date,description,account,debit,credit,transaction_id,entry_id,status,reconciled_status,balance\n"
+    );
+
+    for transaction in transactions {
+        for entry in transaction.entries.iter() {
+            if let Some(id) = account_id {
+                if entry.account_id != id {
+                    continue;
+                }
+            }
+            let account = accounts_by_id.get(&entry.account_id);
+            let account_name = account
+                .map(|a| a.name.as_str())
+                .unwrap_or("Unknown Account");
+            let (debit, credit) = match entry.entry_type {
+                Side::Debit => (format_decimal_2(entry.amount), String::new()),
+                Side::Credit => (String::new(), format_decimal_2(entry.amount)),
+            };
+
+            let status = format!("{:?}", transaction.status);
+            let reconciled_status = entry
+                .reconciled_status
+                .map(|s| format!("{:?}", s))
+                .unwrap_or_default();
+            let balance = entry
+                .balance
+                .map(format_decimal_2)
+                .unwrap_or_default();
+
+            let fields = [
+                entry.date.format("%Y-%m-%d").to_string(),
+                entry.description.clone(),
+                account_name.to_string(),
+                debit,
+                credit,
+                transaction.id.to_string(),
+                entry.id.to_string(),
+                status,
+                reconciled_status,
+                balance,
+            ];
+
+            for (idx, field) in fields.iter().enumerate() {
+                if idx > 0 {
+                    csv.push(',');
+                }
+                csv.push_str(&escape_csv_field(field));
+            }
+            csv.push('\n');
+        }
+    }
+
+    let mut file = File::create(path)?;
+    file.write_all(csv.as_bytes())?;
+    Ok(())
+}
+
+pub fn export_accounts_to_csv<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
+    let mut csv = String::new();
+    csv.push_str(
+        "account_id,name,account_type,starting_balance,balance\n"
+    );
+
+    for account in books.accounts() {
+
+        let fields = [
+            account.id.to_string(),
+            account.name,
+            format!("{:?}", account.account_type),
+            format_decimal_2(account.starting_balance),
+            format_decimal_2(account.balance),
+        ];
+
+        for (idx, field) in fields.iter().enumerate() {
+            if idx > 0 {
+                csv.push(',');
+            }
+            csv.push_str(&escape_csv_field(field));
+        }
+        csv.push('\n');
+    }
+
+    let mut file = File::create(path)?;
+    file.write_all(csv.as_bytes())?;
+    Ok(())
+}
+
+fn escape_csv_field(value: &str) -> String {
+    let needs_quotes = value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r');
+    if !needs_quotes {
+        return value.to_string();
+    }
+
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        if ch == '"' {
+            escaped.push('"');
+        }
+        escaped.push(ch);
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn format_decimal_2(value: Decimal) -> String {
+    format!("{:.2}", value.round_dp(2))
 }
 
 pub fn file_exists<P: AsRef<Path>>(path: P) -> bool {
@@ -151,7 +295,7 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use crate::interest::{Interest, InterestTerms, InterestType};
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
+    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, book_repo::{export_to_csv, save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
     use tempfile::NamedTempFile;
     use super::{Books, load_books};
 
@@ -301,5 +445,55 @@ mod tests {
         let result = load_books(filepath);
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("missing field"));
+    }
+
+    #[test]
+    fn test_export_to_csv_general_ledger() {
+        let books = build_books();
+        let tmp_file = NamedTempFile::new().expect("create temp file");
+        let filepath = tmp_file.path();
+
+        export_to_csv(filepath, &books, None).expect("export csv");
+
+        let csv = std::fs::read_to_string(filepath).expect("read csv");
+        let mut lines = csv.lines();
+        let header = lines.next().expect("header");
+        assert_eq!(
+            "date,description,account,debit,credit,transaction_id,entry_id,status,reconciled_status,balance",
+            header
+        );
+
+        let rows: Vec<&str> = lines.filter(|line| !line.trim().is_empty()).collect();
+        assert_eq!(4, rows.len());
+        assert_eq!(2, rows.iter().filter(|row| row.contains("received moneys")).count());
+        assert_eq!(2, rows.iter().filter(|row| row.contains("Gave some moneys back")).count());
+        assert!(rows.iter().any(|row| row.contains(",Savings Account 1,")));
+        assert!(rows.iter().any(|row| row.contains(",Credit Account 1,")));
+    }
+
+    #[test]
+    fn test_export_to_csv_account_includes_balances() {
+        let books = build_books();
+        let account_id = books
+            .accounts()
+            .into_iter()
+            .find(|account| account.name == "Savings Account 1")
+            .expect("account")
+            .id;
+        let tmp_file = NamedTempFile::new().expect("create temp file");
+        let filepath = tmp_file.path();
+
+        export_to_csv(filepath, &books, Some(account_id)).expect("export csv");
+
+        let csv = std::fs::read_to_string(filepath).expect("read csv");
+        let mut lines = csv.lines();
+        let _header = lines.next().expect("header");
+
+        let rows: Vec<&str> = lines.filter(|line| !line.trim().is_empty()).collect();
+        assert_eq!(2, rows.len());
+        assert!(rows.iter().all(|row| row.contains(",Savings Account 1")));
+        assert!(rows.iter().all(|row| row.trim_end().ends_with(",,")) == false);
+        assert!(rows.iter().any(|row| row.ends_with(",10000.00")));
+        assert!(rows.iter().any(|row| row.ends_with(",9901.01")));
     }
 }
