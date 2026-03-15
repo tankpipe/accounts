@@ -362,7 +362,7 @@ mod tests {
             "Monthly interest".to_string(),
             None,
         );
-        let _ = books.add_interest(Interest::from_components(Some(date), vec![interest_terms], id1));   
+        let _ = books.add_interest(Interest::from_components(vec![interest_terms], id1));   
         books
    }
 
