@@ -221,6 +221,11 @@ impl Books {
             return Some(Err(books_error!("errors.transaction_requires_one_entry")))
         }
 
+        // Using transaction date to avoid potential reconciliation edge case for split date entries.
+        if transaction.status == TransactionStatus::Recorded && transaction.date() > Some(chrono::Utc::now().date_naive()) {
+            return Some(Err(books_error!("errors.future_transaction_set_as_recorded")))
+        }
+
         if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
             return Some(Err(books_error!("errors.account_not_found", id => transaction.entries[0].account_id)))
         }
@@ -313,7 +318,6 @@ impl Books {
 
     pub fn delete_transaction(&mut self, id: &Uuid) -> Result<(), BooksError> {
         if let Some(index) = self.transactions.iter().position(|t| t.id == *id) {
-            println!("remove: {:?}", index);
 
             if let Some(transaction) = self.transactions.get(index) {
                 if transaction.entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
@@ -473,6 +477,26 @@ impl Books {
         self.transactions
             .iter()
             .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
+            .filter(|t| {
+                match status {
+                    Some(filter_status) => t.status == filter_status,
+                    None => true,
+                }
+            })
+            .map(|t| t.clone())
+            .collect()
+    }
+
+    pub fn transactions_by_interest(&self, interest_id: Uuid, status: Option<TransactionStatus>, from: Option<NaiveDate>) -> Vec<Transaction> {
+        self.transactions
+            .iter()
+            .filter(|t| {t.source_type == Some(Source::Interest) && t.source_id == Some(interest_id)})
+            .filter(|t| {
+                match from {
+                    Some(filter_from) => t.date() >= Some(filter_from),
+                    None => true,
+                }
+            })
             .filter(|t| {
                 match status {
                     Some(filter_status) => t.status == filter_status,

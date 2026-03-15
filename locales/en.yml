@@ -11,6 +11,7 @@ errors:
   transaction_requires_one_entry: "A transaction must have at least one entry."
   transaction_requires_one_account: "A transaction must have at least one accoun."  
   transaction_single_entry_per_account: "An Account can only have one entry in a transaction."
+  future_transaction_set_as_recorded: "A future Transaction should not have a Recorded status."
   reconciled_entry_immutable: "A reconciled or outstanding entry can not be modified."
   transaction_before_reconciliation_date: "Transactions can not be added earlier than the account reconciliation date."
   transaction_not_found: "Transaction %{id} not found."

@@ -1,4 +1,4 @@
-use chrono::{Datelike, Days, NaiveDate};
+use chrono::{Datelike, Days, NaiveDate, Utc};
 use rust_decimal::prelude::*;
 use rust_decimal_macros::dec;
 use serde::Serialize;
@@ -111,10 +111,24 @@ pub fn calculate_interest(books: &mut Books, mut interest: Interest, to_date: Na
     let mut transactions: Vec<Transaction> = Vec::new();
     let source_account = books.get_account(&interest.account_id)?;
     
-    let start_date = interest.paid_to.map_or_else(
+    let base_start_date = interest.paid_to.map_or_else(
         || interest.get_start_date().unwrap().clone(),
         |date| date.checked_add_days(Days::new(1)).unwrap()
     );
+    let today = Utc::now().date_naive();
+    let start_date = if base_start_date > today { today } else { base_start_date };
+
+    let existing_transactions = books.transactions_by_interest(interest.id, None, Some(start_date));
+    for transaction in existing_transactions {
+        println!("Deleting interest {} transaction, date: {:?}", interest.id, transaction.date());
+        let result = books.delete_transaction(&transaction.id);
+        if let Err(e) = result {
+            println!("Error deleting transaction: {:?}, {:?}, {:?}", transaction.id, transaction.date(), e);
+        }
+    }
+        
+
+
     let account_entries = books.account_entries(source_account.id)?;
    
     let previous_entry: Option<&Entry> = account_entries.iter().rev().find(|t| t.date < start_date);
@@ -218,16 +232,21 @@ pub fn calculate_interest(books: &mut Books, mut interest: Interest, to_date: Na
         cur_date = cur_date.checked_add_days(Days::new(1)).unwrap();
     }
 
-    interest.paid_to = transactions.last().and_then(|t| t.date());
-    books.update_interest(interest)?;
-
     for t in transactions {
-        println!("Adding interest transaction: {:?}", t);
+        println!("Adding interest {} transaction, date: {:?}", interest.id, t.date());
         books.add_transaction(t)?;
     }
 
+    interest.paid_to = books
+        .transactions_by_interest(interest.id, None, None)
+        .iter()
+        .filter_map(|t| t.date())
+        .max();
+    books.update_interest(interest)?;
+
     Ok(())
 }
+
 
 fn build_interest_transaction(source_account: &Account, interest_account: &Option<Account>, cur_date: NaiveDate, interest_tally: Decimal) -> Transaction {
     let transaction_id = uuid::Uuid::new_v4();
@@ -308,7 +327,7 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
+    use chrono::{Datelike, Days, NaiveDate, Utc};
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use uuid::Uuid;
@@ -675,6 +694,70 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
     }
 
 
+
+    #[test]
+    fn calculate_interest_v2_recalculates_from_today() {
+        let mut books = Books::build_empty("My Books");
+
+        let today = Utc::now().date_naive();
+        let end_of_month = {
+            let year = today.year();
+            let month = today.month();
+            let (next_year, next_month) = if month == 12 {
+                (year + 1, 1)
+            } else {
+                (year, month + 1)
+            };
+            let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();
+            first_next.pred_opt().unwrap()
+        };
+
+        let mut savings_account = Account::create_new("Savings", AccountType::Asset);
+        savings_account.starting_balance = dec!(1000);
+
+        let interest_account = Account::create_new("Interest Income", AccountType::Revenue);
+
+        let interest_terms = InterestTerms::simple(
+            today.checked_sub_days(Days::new(30)).unwrap(),
+            dec!(0.12),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Interest payment".to_string(),
+            Some(interest_account.id)
+        );
+
+        let interest = Interest::from_components(
+            Some(today.checked_add_days(Days::new(10)).unwrap()),
+            vec![interest_terms],
+            savings_account.id
+        );
+        savings_account.interest_id = Some(interest.id);
+
+        books.add_account(savings_account.clone());
+        books.add_account(interest_account.clone());
+        books.add_interest(interest.clone()).unwrap();
+
+        let existing_date = today.checked_add_days(Days::new(5)).unwrap();
+        let existing_transaction = super::build_interest_transaction(
+            &savings_account,
+            &Some(interest_account.clone()),
+            existing_date,
+            dec!(5)
+        );
+        let existing_id = existing_transaction.id;
+        books.add_transaction(existing_transaction).unwrap();
+
+        calculate_interest(&mut books, interest, end_of_month).unwrap();
+
+        let interest_transactions = books.transactions_by_interest(savings_account.interest_id.unwrap(), None, Some(today));
+        assert!(interest_transactions.iter().all(|t| t.id != existing_id));
+        assert_eq!(interest_transactions.len(), 1);
+
+        let expected_date = end_of_month.succ_opt().unwrap();
+        assert_eq!(interest_transactions[0].date(), Some(expected_date));
+    }
 
     pub fn build_transaction(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate, description: &str, amount: Decimal) -> Transaction {
         let transaction_id = Uuid::new_v4();        
