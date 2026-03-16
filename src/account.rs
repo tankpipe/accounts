@@ -58,6 +58,10 @@ impl Transaction {
             .collect::<Vec<Entry>>()
     }
 
+    pub fn account_ids(&self) -> Vec<Uuid> {
+        self.entries.iter().map(|e| e.account_id).collect()
+    }
+
     pub fn update_balance(&mut self, prev_balance: Decimal, account: &Account) -> Decimal {
         let mut balance = prev_balance.clone();
         for i in 0..self.entries.len() {
