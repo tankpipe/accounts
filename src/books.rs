@@ -553,8 +553,7 @@ impl Books {
         sort_transactions_by_account(&mut transactions, None, TransactionSortOrder::OldestFirst);
         
         let new_last = transactions.last().and_then(|t| t.date());
-        println!("New last date: {:?}", new_last);
-        
+       
         let existing_schedule = self.scheduler.get_schedule(schedule_id)?;
         self.scheduler.update_schedule(Schedule {
             id: schedule_id,
