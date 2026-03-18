@@ -6,6 +6,7 @@ pub mod books_repo;
 pub mod serializer;
 pub mod scheduler;
 pub mod schedule;
+pub mod reconcile;
 pub mod books_prev_versions;
 pub mod interest;
 

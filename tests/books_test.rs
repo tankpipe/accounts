@@ -7,19 +7,16 @@ mod tests {
     use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
     use accounts::account::*;
-    use accounts::books::{Books, BooksError, ReconciliationItem, ReconciliationMatchStatus, sort_transactions_by_account, TransactionSortOrder};
+    use accounts::books::{Books, BooksError, sort_transactions_by_account, TransactionSortOrder};
+    use accounts::reconcile::{ReconciliationItem, ReconciliationMatchStatus};
     use accounts::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
-    //use super::{sort_transactions_by_account, TransactionSortOrder};
-
-    //use super::Books;
-
+    
     // Helper function for creating BooksError for integration tests
     fn make_books_error(message: &str) -> BooksError {
         BooksError {
             error: message.to_string(),
         }
     }
-
 
     #[test]
     fn test_add_account(){

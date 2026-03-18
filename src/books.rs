@@ -1,12 +1,12 @@
 use std::{collections::HashMap, cmp::Ordering};
 use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::books_error;
 
 use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
+use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, TargetResult};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -16,55 +16,6 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Settings {
     pub require_double_entry: bool,
 }
-
-/// Result of matching a transaction during reconciliation.
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub enum ReconciliationMatchStatus {
-    Matched,
-    PartialMatch,
-    Mismatch,
-    Unmatched,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum ReconciliationItem {
-    Reconciliation(ReconciliationResult),
-    Original(TargetResult),
-}
-
-impl ReconciliationItem {
-    pub fn status(&self) -> ReconciliationMatchStatus {
-        match self {
-            ReconciliationItem::Reconciliation(r) => r.status.clone(),
-            ReconciliationItem::Original(o) => o.status.clone(),
-        }
-    }
-
-    pub fn set_status(&mut self, status: ReconciliationMatchStatus) {
-        match self {
-            ReconciliationItem::Reconciliation(r) => r.status = status,
-            ReconciliationItem::Original(o) => o.status = status,
-        }
-    }
-}
-
-/// Result for a single transaction in a reconciliation.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ReconciliationResult {
-    pub transaction: Transaction,
-    pub status: ReconciliationMatchStatus,
-    pub matched_transaction_id: Option<Uuid>,
-    pub balance: Option<Decimal>,
-}
-
-/// Wrapper for an existing transaction during reconciliation.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TargetResult {
-    pub transaction: Transaction,
-    pub status: ReconciliationMatchStatus,
-    pub matched_reconciliation_id: Option<Uuid>,
-}
-
 
 /// Book of accounts a.k.a The Books.
 #[derive(Serialize, Deserialize)]
