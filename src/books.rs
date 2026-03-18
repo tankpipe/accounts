@@ -955,7 +955,7 @@ impl Books {
         println!("Running checks 📋  Projection date: {}", projection_date);
         let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
         println!("Calculating interest...");
-        calculate_interest_for_accounts(self, interest_accounts, projection_date);                
+        calculate_interest_for_accounts(self, interest_accounts, projection_date)?;                
         println!("Generating schedules...");
         self.generate(projection_date);
         println!("Checks completed ✅");
