@@ -130,8 +130,11 @@ impl Books {
         if self.transactions.iter().any(|t|t.involves_account(id)) {
             return Err(books_error!("errors.account_cannot_delete_with_transactions", id => id));
         }
-        self.flag_interest_outdated_by_account(&self.get_account(id).unwrap());
-        self.accounts.remove(id);
+        
+        if let Some(account) = self.accounts.remove(id) {
+            self.flag_interest_outdated_by_account(&account);
+        }
+        
         Ok(())
     }
 
@@ -283,9 +286,8 @@ impl Books {
             if self.transactions[index].entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
                 return Err(books_error!("errors.cannot_delete_reconciled_transaction"));
             }
-            
-            self.flag_interest_outdated(&self.transactions[index].clone());
-            self.transactions.remove(index);
+            let transaction = self.transactions.remove(index);
+            self.flag_interest_outdated(&transaction);            
             Ok(())
         } else {
             return Err(books_error!("errors.transaction_not_found", id => id));
