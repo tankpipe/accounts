@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::{collections::HashMap, cmp::Ordering};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ pub struct Books {
     pub settings: Settings,
 
     #[serde(skip)]
-    interest_outdated: bool,
+    recalculate_interest: HashSet<Uuid>,
 }
 
 impl Books {
@@ -60,7 +61,7 @@ impl Books {
             scheduler: Scheduler::build_empty(), transactions: Vec::new(),
             interests: HashMap::new(),
             settings: Settings{ require_double_entry: false },
-            interest_outdated: false,
+            recalculate_interest: HashSet::new(),
         }
     }
 
@@ -74,7 +75,7 @@ impl Books {
             transactions,
             interests,
             settings,
-            interest_outdated: false,
+            recalculate_interest: HashSet::new(),
         }
     }
 
@@ -312,23 +313,22 @@ impl Books {
     }
 
     fn flag_interest_outdated(&mut self, transaction: &Transaction) -> bool {
-        if self.interest_outdated { return true }
+        if self.interest_outdated() { return true }
         transaction.entries.iter().any(|entry| {
             if let Some(account) = self.accounts.get(&entry.account_id) {
                 if account.interest_id.is_some() {
-                    self.interest_outdated = true;
-                    return true;
+                    self.recalculate_interest.insert(account.id);
                 }
             }
-            false
+            self.interest_outdated()
         })
     }
 
     fn flag_interest_outdated_by_account(&mut self, account: &Account) -> bool {
-        if self.interest_outdated { return true }
+        if self.interest_outdated() { return true }
         
         if account.interest_id.is_some() {
-            self.interest_outdated = true;
+            self.recalculate_interest.insert(account.id);
             return true;
         }
         false
@@ -533,18 +533,16 @@ impl Books {
     }
 
     pub fn add_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
-        if !self.accounts.contains_key(&interest.account_id) {
-            return Err(books_error!("errors.account_not_found", id => interest.account_id));
-        }
-        
-        // Update the account to reference this interest info
+
         if let Some(account) = self.accounts.get_mut(&interest.account_id) {
             account.interest_id = Some(interest.id);
-        }
-        
-        self.interests.insert(interest.id, interest);
-        self.interest_outdated = true;
-        Ok(())
+            self.recalculate_interest.insert(account.id);
+            self.interests.insert(interest.id, interest);
+            Ok(())
+        } else {
+            return Err(books_error!("errors.account_not_found", id => interest.account_id));
+        }        
+
     }
 
     pub fn get_interest(&self, interest_id: &Uuid) -> Result<Interest, BooksError> {
@@ -558,19 +556,17 @@ impl Books {
             return Err(books_error!("errors.account_not_found", id => interest.account_id));
         }
         
-        // Get the account to check if it has interest info
         let account = self.accounts.get(&interest.account_id)
             .ok_or(books_error!("errors.account_not_found", id => interest.account_id))?;
         
+        self.recalculate_interest.insert(account.id);
+
         if let Some(interest_id) = account.interest_id {
-            // Update existing interest info
             self.interests.insert(interest_id, interest);
         } else {
-            // Account doesn't have interest info yet, add it
             self.add_interest(interest)?;
         }
         
-        self.interest_outdated = true;
         Ok(())
     }
 
@@ -939,18 +935,20 @@ impl Books {
 
     pub fn recalculate_interest(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
         println!("Calculating interest...");
-        let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
+        let interest_accounts = self.accounts().into_iter().filter(|a| {
+            self.recalculate_interest.contains(&a.id) && a.interest_id.is_some()
+        }).collect();
         calculate_interest_for_accounts(self, interest_accounts, projection_date)?;
         println!("Interest up-to-date ✅");
         Ok(())
     }
 
     pub fn reset_interest_flag(&mut self) {
-        self.interest_outdated = false;
+        self.recalculate_interest.clear();
     }
 
     pub fn interest_outdated(&self) -> bool {
-        self.interest_outdated
+        !self.recalculate_interest.is_empty()
     }
 
     pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
