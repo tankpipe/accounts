@@ -222,7 +222,9 @@ mod tests {
         let t2 = build_transaction_with_date(Some(account1_id), Some(account2_id), early_date);
         let result = books.add_transaction(t2);
         assert!(result.is_err());
-        assert_eq!("Transactions can not be added earlier than the account reconciliation date.".to_string(), result.err().unwrap().error);
+
+        let error_msg = format!("Transactions can not be added earlier than the account reconciliation date. {} is before {}.", early_date, reconciliation_date);
+        assert_eq!(error_msg, result.err().unwrap().error);
     }
 
     #[test]

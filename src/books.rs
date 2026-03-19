@@ -231,7 +231,7 @@ impl Books {
                 if let Some(account) = self.accounts.get(&entry.account_id) {
                     if let Some(reconciliation_info) = &account.reconciliation_info {
                         if reconciliation_info.date > entry.date {
-                            return Some(Err(books_error!("errors.transaction_before_reconciliation_date")));
+                            return Some(Err(books_error!("errors.transaction_before_reconciliation_date", transaction_date = entry.date, reconciliation_date = reconciliation_info.date)));
                         }
                     }
                 }
@@ -473,6 +473,7 @@ impl Books {
     }
 
     pub fn transactions_by_interest(&self, interest_id: Uuid, status: Option<TransactionStatus>, from: Option<NaiveDate>) -> Vec<Transaction> {
+        print!("transactions_by_interest called with interest_id: {}, status: {:?}, from: {:?}", interest_id, status, from);
         self.transactions
             .iter()
             .filter(|t| {t.source_type == Some(Source::Interest) && t.source_id == Some(interest_id)})
