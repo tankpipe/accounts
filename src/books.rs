@@ -28,6 +28,9 @@ pub struct Books {
     transactions: Vec<Transaction>,
     interests: HashMap<Uuid, Interest>,
     pub settings: Settings,
+
+    #[serde(skip)]
+    interest_outdated: bool,
 }
 
 impl Books {
@@ -57,6 +60,7 @@ impl Books {
             scheduler: Scheduler::build_empty(), transactions: Vec::new(),
             interests: HashMap::new(),
             settings: Settings{ require_double_entry: false },
+            interest_outdated: false,
         }
     }
 
@@ -70,12 +74,14 @@ impl Books {
             transactions,
             interests,
             settings,
+            interest_outdated: false,
         }
     }
 
     pub fn add_account(&mut self, account: Account) {
         let mut account = account;
         account.reconciliation_info = None;
+        self.flag_interest_outdated_by_account(&account);
         if ! self.accounts.contains_key(&account.id) {
             self.accounts.insert(account.id, account);
         }        
@@ -111,6 +117,7 @@ impl Books {
             return Err(books_error!("errors.account_starting_balance_immutable_after_reconciliation"));
         }
 
+        self.flag_interest_outdated_by_account(&account);
         self.accounts.insert(account.id, account);
         Ok(())
     }
@@ -123,7 +130,7 @@ impl Books {
         if self.transactions.iter().any(|t|t.involves_account(id)) {
             return Err(books_error!("errors.account_cannot_delete_with_transactions", id => id));
         }
-
+        self.flag_interest_outdated_by_account(&self.get_account(id).unwrap());
         self.accounts.remove(id);
         Ok(())
     }
@@ -154,6 +161,7 @@ impl Books {
             return value;
         }
 
+        self.flag_interest_outdated(&transaction);
         self.transactions.push(transaction);
         Ok(())
     }
@@ -202,7 +210,7 @@ impl Books {
             }
         }
 
-        // If the trandaction is net new,
+        // If the transaction is net new,
         // or the original_transaction has entries that are not flaged as reconciled or outstanding,
         // check that their dates are after their account's reconciliation date
         
@@ -236,7 +244,9 @@ impl Books {
         }
 
         if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
-            let _old = std::mem::replace(&mut self.transactions[index], transaction);
+            self.flag_interest_outdated(&transaction);
+            let old = std::mem::replace(&mut self.transactions[index], transaction);
+            self.flag_interest_outdated(&old);            
             Ok(())
         } else {
             Err(books_error!("errors.transaction_not_found", id => transaction.id))
@@ -269,13 +279,12 @@ impl Books {
 
     pub fn delete_transaction(&mut self, id: &Uuid) -> Result<(), BooksError> {
         if let Some(index) = self.transactions.iter().position(|t| t.id == *id) {
-
-            if let Some(transaction) = self.transactions.get(index) {
-                if transaction.entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
-                    return Err(books_error!("errors.cannot_delete_reconciled_transaction"));
-                }
+            // Check reconciled status first
+            if self.transactions[index].entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
+                return Err(books_error!("errors.cannot_delete_reconciled_transaction"));
             }
-
+            
+            self.flag_interest_outdated(&self.transactions[index].clone());
             self.transactions.remove(index);
             Ok(())
         } else {
@@ -298,6 +307,29 @@ impl Books {
         }
 
         None
+    }
+
+    fn flag_interest_outdated(&mut self, transaction: &Transaction) -> bool {
+        if self.interest_outdated { return true }
+        transaction.entries.iter().any(|entry| {
+            if let Some(account) = self.accounts.get(&entry.account_id) {
+                if account.interest_id.is_some() {
+                    self.interest_outdated = true;
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    fn flag_interest_outdated_by_account(&mut self, account: &Account) -> bool {
+        if self.interest_outdated { return true }
+        
+        if account.interest_id.is_some() {
+            self.interest_outdated = true;
+            return true;
+        }
+        false
     }
 
     /// Get a copy of the entries with balances for a given Account.
@@ -509,6 +541,7 @@ impl Books {
         }
         
         self.interests.insert(interest.id, interest);
+        self.interest_outdated = true;
         Ok(())
     }
 
@@ -535,6 +568,7 @@ impl Books {
             self.add_interest(interest)?;
         }
         
+        self.interest_outdated = true;
         Ok(())
     }
 
@@ -899,6 +933,22 @@ impl Books {
             Some(k) => return self.accounts.contains_key(&k),
             None => return true
         }
+    }
+
+    pub fn recalculate_interest(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
+        println!("Calculating interest...");
+        let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
+        calculate_interest_for_accounts(self, interest_accounts, projection_date)?;
+        println!("Interest up-to-date ✅");
+        Ok(())
+    }
+
+    pub fn reset_interest_flag(&mut self) {
+        self.interest_outdated = false;
+    }
+
+    pub fn interest_outdated(&self) -> bool {
+        self.interest_outdated
     }
 
     pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{

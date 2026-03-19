@@ -373,6 +373,7 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
         cur_date = cur_date.checked_add_days(Days::new(1)).unwrap();
     }
 
+    books.reset_interest_flag();
     Ok(())
 }
 
