@@ -36,7 +36,7 @@ pub struct InterestTerms  {
     pub paid_frequency: i32,
     pub paid_day: i32,
     pub description: String,
-    pub interest_account_id: Option<Uuid>
+    pub income_account_id: Option<Uuid>
 }
 
 impl InterestTerms {
@@ -53,7 +53,7 @@ impl InterestTerms {
             paid_frequency,
             paid_day,
             description,
-            interest_account_id
+            income_account_id: interest_account_id
         }
     }
 
@@ -70,7 +70,7 @@ impl InterestTerms {
             paid_frequency,
             paid_day,
             description,
-            interest_account_id
+            income_account_id: interest_account_id
         }
     }
 
@@ -417,7 +417,7 @@ fn settle_interest_periods(
             let balance = state.interest_tally_by_term.get(&term_id).copied().unwrap_or(dec!(0));
             if balance > dec!(0) {
                 payouts_by_account
-                    .entry(term.interest_account_id)
+                    .entry(term.income_account_id)
                     .and_modify(|total| *total += balance)
                     .or_insert(balance);
             }
