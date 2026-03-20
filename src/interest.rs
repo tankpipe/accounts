@@ -73,6 +73,12 @@ impl InterestTerms {
             interest_account_id
         }
     }
+
+    pub fn is_end_of_interest_period(&self, date: NaiveDate) -> bool {
+        let paid_to_day = if self.paid_day > 1 { self.paid_day as u32 - 1 } else {31};
+        date.day() == paid_to_day || (paid_to_day > date.day() && date.succ_opt().unwrap().day() == 1)
+    }
+    
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -737,7 +743,7 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
     }
 
 
- #[test]    
+    #[test]
     fn calculate_interest_daily_with_min_max_balance() {
         let mut books = Books::build_empty("My Books");
         let mut savings_account = Account::create_new("Savings Account 1", AccountType::Asset);
@@ -790,7 +796,7 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
     }
 
 
-#[test]    
+    #[test]
     fn calculate_tiered_interest_daily() {
         let mut books = Books::build_empty("My Books");
         let mut savings_account = Account::create_new("Savings Account 1", AccountType::Asset);
@@ -855,7 +861,68 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
         assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
     }
 
+    // #[test]
+    // fn calculate_tiered_interest_daily_paid_mid_month() {
+    //     let mut books = Books::build_empty("My Books");
+    //     let mut savings_account = Account::create_new("Savings Account 1", AccountType::Asset);
+    //     savings_account.starting_balance = dec!(10000);
+    //     books.add_account(savings_account.clone());
+        
+    //     let mut transaction_account = Account::create_new("Transaction Account 1", AccountType::Asset);
+    //     transaction_account.starting_balance = dec!(10000);
+    //     books.add_account(transaction_account.clone());
+        
+    //     let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(100)));
+    //     let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(200)));
+    //     let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(savings_account.id), NaiveDate::from_ymd_opt(2022, 2, 15).unwrap(), "Withdrawal", dec!(2000)));
 
+    //     let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
+    //     books.add_account(interest_earned.clone());
+
+    //     let tier_1_terms = InterestTerms::from_components(
+    //         NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
+    //         None,
+    //         dec!(0.05),
+    //         InterestType::Daily,
+    //         None,
+    //         Some(dec!(10000)),    
+    //         ScheduleEnum::Months,
+    //         1,
+    //         7,
+    //         "Interest payment".to_string(),
+    //         Some(interest_earned.id)
+    //     );
+    //     let tier_2_terms = InterestTerms::from_components(
+    //         NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
+    //         None,
+    //         dec!(0.06),
+    //         InterestType::Daily,
+    //         Some(dec!(10000)),
+    //         None,    
+    //         ScheduleEnum::Months,
+    //         1,
+    //         29,
+    //         "Interest payment".to_string(),
+    //         Some(interest_earned.id)
+    //     );
+    //     let interest = Interest::from_components(vec![tier_1_terms, tier_2_terms], savings_account.id);        
+    //     calculate_interest_wrapper(&mut books, interest, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+    //     let transactions = books.transactions().iter().filter(|t| t.source_type == Some(Source::Interest)).collect::<Vec<_>>();
+
+    //     assert_eq!(transactions.len(), 4);
+    //     assert_eq!(transactions[0].entries[0].amount, dec!(8.22));
+    //     assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 7).unwrap());
+
+    //     assert_eq!(transactions[1].entries[0].amount, dec!(0.80));
+    //     assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 29).unwrap());
+
+    //     assert_eq!(transactions[0].entries[0].amount, dec!(42.47));
+    //     assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 7).unwrap());
+
+    //     assert_eq!(transactions[1].entries[0].amount, dec!(0.76));
+    //     assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+
+    // }
 
     #[test]
     fn calculate_interest_recalculates_from_today() {
@@ -1183,6 +1250,139 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
         
         assert_eq!(feb_account_1.entries[0].amount, dec!(50.88));
         assert_eq!(feb_account_2.entries[0].amount, dec!(12.32));        
+    }
+
+    
+
+    #[test]
+    fn test_is_end_of_month_february_non_leap() {
+        let terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            31, // paid_day = 31, so paid_to_day = 30
+            "Test".to_string(),
+            None
+        );
+
+        // February 2022 has 28 days
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 27).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 1).unwrap()));
+    }
+
+    #[test]
+    fn test_is_end_of_month_february_leap() {
+        let terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            31, // paid_day = 31, so paid_to_day = 30
+            "Test".to_string(),
+            None
+        );
+
+        // February 2020 has 29 days (leap year)
+        // With paid_to_day = 30, and Feb 29 < 30, the fallback should trigger
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2020, 2, 29).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2020, 2, 28).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2020, 2, 27).unwrap()));
+    }
+
+    #[test]
+    fn test_is_end_of_month_paid_day_1() {
+        let terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1, // paid_day = 1, so paid_to_day = 31
+            "Test".to_string(),
+            None
+        );
+
+        // With paid_day = 1, paid_to_day = 31, so should trigger on last day of month
+        // or when next day is 1st of month
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()));
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()));
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 4, 30).unwrap()));
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2020, 2, 29).unwrap())); // leap year
+        
+        // Should not trigger on non-month-end days
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 30).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 27).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 4, 29).unwrap()));
+    }
+
+    #[test]
+    fn test_is_end_of_month_paid_day_15() {
+        let terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            15, // paid_day = 15, so paid_to_day = 14
+            "Test".to_string(),
+            None
+        );
+
+        // Should trigger on 14th of month
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 14).unwrap()));
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 14).unwrap()));
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 12, 14).unwrap()));
+        
+        // Should not trigger on other days
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 13).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 15).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()));
+    }
+  
+
+    #[test]
+    fn test_is_end_of_month_various_paid_days() {
+        // Test different paid_day values to ensure the logic works correctly
+        let test_cases = vec![
+            (1, 31),  // paid_day 1 -> paid_to_day 31
+            (5, 4),   // paid_day 5 -> paid_to_day 4
+            (10, 9),  // paid_day 10 -> paid_to_day 9
+            (20, 19), // paid_day 20 -> paid_to_day 19
+            (30, 29), // paid_day 30 -> paid_to_day 29
+            (31, 30), // paid_day 30 -> paid_to_day 29
+            (32, 31), // paid_day 30 -> paid_to_day 29
+        ];
+
+        for (paid_day, expected_paid_to_day) in test_cases {
+            let terms = InterestTerms::simple(
+                NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+                dec!(0.05),
+                InterestType::Daily,
+                ScheduleEnum::Months,
+                1,
+                paid_day,
+                "Test".to_string(),
+                None
+            );
+
+            // Should trigger on the expected day
+            assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, expected_paid_to_day).unwrap()), 
+                    "Failed for paid_day {} on day {}", paid_day, expected_paid_to_day);
+            
+            // Should not trigger on adjacent days
+            if expected_paid_to_day > 1 {
+                assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, expected_paid_to_day - 1).unwrap()), 
+                        "Should not trigger on day {} for paid_day {}", expected_paid_to_day - 1, paid_day);
+            }
+            if expected_paid_to_day < 31 {
+                assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, expected_paid_to_day + 1).unwrap()), 
+                        "Should not trigger on day {} for paid_day {}", expected_paid_to_day + 1, paid_day);
+            }
+        }
     }
 
     pub fn build_transaction(dr_account_id: Option<Uuid>, cr_account_id: Option<Uuid>, date: NaiveDate, description: &str, amount: Decimal) -> Transaction {
