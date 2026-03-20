@@ -146,18 +146,6 @@ fn build_interest_transaction(source_account: &Account, interest_account: &Optio
     transaction
 }
 
-fn is_end_of_month(date: NaiveDate) -> bool {
-    let year = date.year();
-    let month = date.month();
-    let (next_year, next_month) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();    
-    date == first_next.pred_opt().unwrap()
-}
-
 #[derive(Debug)]
 struct InterestCalculationState {
     account: Account,
@@ -165,12 +153,11 @@ struct InterestCalculationState {
     entries: Vec<Entry>,
     entry_index: usize,
     balance: Decimal,
-    interest_paid: Decimal,
-    interest_tally_by_account: HashMap<Uuid, Decimal>,
-    interest_tally_no_account: Decimal,
+    interest_paid_by_term: HashMap<Uuid, Decimal>,
+    interest_tally_by_term: HashMap<Uuid, Decimal>,
+    term_by_id: HashMap<Uuid, InterestTerms>,
     start_date: NaiveDate,
     recorded_transaction_keys: HashSet<(NaiveDate, Option<Uuid>)>,
-    recorded_transaction_amounts: HashMap<(NaiveDate, Option<Uuid>), Decimal>,
 }
 
 // Calculate interest for all provided accounts in a single pass over time.
@@ -197,7 +184,6 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
         // - delete any projected ones that we’re about to recalculate.
         let existing_interest_transactions = books.transactions_by_interest(interest.id, None, None);
         let mut recorded_transaction_keys: HashSet<(NaiveDate, Option<Uuid>)> = HashSet::new();
-        let mut recorded_transaction_amounts: HashMap<(NaiveDate, Option<Uuid>), Decimal> = HashMap::new();
         let mut recorded_dates: Vec<NaiveDate> = Vec::new();
         let mut projected_dates: Vec<NaiveDate> = Vec::new();
 
@@ -211,14 +197,6 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
                         .map(|e| e.account_id);
                     recorded_transaction_keys.insert((date, interest_account_id));
                     recorded_dates.push(date);
-                    let amount = transaction
-                        .entries
-                        .iter()
-                        .find(|e| e.account_id == account.id)
-                        .map(|e| e.amount)
-                        .or_else(|| transaction.entries.first().map(|e| e.amount))
-                        .unwrap_or(dec!(0));
-                    recorded_transaction_amounts.insert((date, interest_account_id), amount);
                 } else {
                     projected_dates.push(date);
                 }
@@ -264,18 +242,23 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
             None => start_date,
         });
 
+        let term_by_id = interest
+            .terms
+            .iter()
+            .map(|term| (term.id, term.clone()))
+            .collect();
+
         states.push(InterestCalculationState {
             account,
             interest,
             entries,
             entry_index: 0,
             balance: Decimal::ZERO,
-            interest_paid: dec!(0),
-            interest_tally_by_account: HashMap::new(),
-            interest_tally_no_account: dec!(0),
+            interest_paid_by_term: HashMap::new(),
+            interest_tally_by_term: HashMap::new(),
+            term_by_id,
             start_date,
             recorded_transaction_keys,
-            recorded_transaction_amounts,
         });
     }
 
@@ -336,44 +319,28 @@ pub fn calculate_interest_for_accounts(books: &mut Books, interest_accounts: Vec
                 let min_balance = terms.min_balance.unwrap_or(dec!(0));
 
                 if state.balance >= min_balance {
+                    let term_interest_paid = state.interest_paid_by_term.entry(terms.id).or_insert(dec!(0));
                     let interest_amount: Decimal;
-                    if terms.max_balance.is_some() && (state.balance + state.interest_paid) >= terms.max_balance.unwrap() {
+                    if terms.max_balance.is_some() && (state.balance + *term_interest_paid) >= terms.max_balance.unwrap() {
                         interest_amount = daily_rate * (terms.max_balance.unwrap() - min_balance);
                     } else {
-                        interest_amount = daily_rate * (state.balance + state.interest_paid - min_balance);
+                        interest_amount = daily_rate * (state.balance + *term_interest_paid - min_balance);
                     }
 
-                    let current_balance;
-                    if let Some(interest_account_id) = terms.interest_account_id {
-                        current_balance = state.interest_tally_by_account.entry(interest_account_id).or_insert(dec!(0));
-                    } else {
-                        current_balance = &mut state.interest_tally_no_account;
-                    }
-
+                    let current_balance = state.interest_tally_by_term.entry(terms.id).or_insert(dec!(0));
                     let new_total = *current_balance + interest_amount;
                     *current_balance = new_total;
                     //println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
                 }
             }
 
-            // TODO Model supports more flexibility than just month end.
-            if is_end_of_month(cur_date) {
-                let payment_date = cur_date.succ_opt().unwrap();
-                settle_month_end_interest_by_account(
-                    books,
-                    state,
-                    payment_date,
-                    &state_index_by_account,
-                    &mut pending_deltas,
-                );
-                settle_month_end_interest_no_account(
-                    books,
-                    state,
-                    payment_date,
-                    &state_index_by_account,
-                    &mut pending_deltas,
-                );
-            }
+            settle_interest_periods(
+                books,
+                state,
+                cur_date,
+                &state_index_by_account,
+                &mut pending_deltas,
+            );
         }
 
         cur_date = cur_date.checked_add_days(Days::new(1)).unwrap();
@@ -428,68 +395,55 @@ fn add_transaction_and_record_deltas(
     }
 }
 
-fn settle_month_end_interest_by_account(
+fn settle_interest_periods(
     books: &mut Books,
     state: &mut InterestCalculationState,
-    payment_date: NaiveDate,
+    period_end_date: NaiveDate,
     state_index_by_account: &HashMap<Uuid, usize>,
     pending_deltas: &mut HashMap<Uuid, HashMap<NaiveDate, Decimal>>,
 ) {
-    let account_ids: Vec<Uuid> = state.interest_tally_by_account.keys().copied().collect();
-
-    for account_id in account_ids {
-        let balance = state.interest_tally_by_account.get(&account_id).unwrap();
-        let transaction_key = (payment_date, Some(account_id));
-        let rounded_balance = balance.round_dp(DECIMAL_PRECISION);
-
-        if !state.recorded_transaction_keys.contains(&transaction_key) {
-            let interest_account = books.get_account(&account_id).unwrap();
-            let tx = build_interest_transaction(&state.account, &Some(interest_account.clone()), payment_date, rounded_balance);
-            add_transaction_and_record_deltas(books, tx, state_index_by_account, pending_deltas);
-        }
-
-        let paid_amount = state
-            .recorded_transaction_amounts
-            .get(&transaction_key)
-            .copied()
-            .unwrap_or(rounded_balance);
-        state.interest_paid += paid_amount;
-        state.interest_tally_by_account.insert(account_id, dec!(0));
-    }
-    
-    // Reset interest_paid to zero for next month's calculation
-    state.interest_paid = dec!(0);
-}
-
-fn settle_month_end_interest_no_account(
-    books: &mut Books,
-    state: &mut InterestCalculationState,
-    payment_date: NaiveDate,
-    state_index_by_account: &HashMap<Uuid, usize>,
-    pending_deltas: &mut HashMap<Uuid, HashMap<NaiveDate, Decimal>>,
-) {
-    if state.interest_tally_no_account <= dec!(0) {
+    let term_ids: Vec<Uuid> = state.interest_tally_by_term.keys().copied().collect();
+    if term_ids.is_empty() {
         return;
     }
 
-    let transaction_key = (payment_date, None);
-    let rounded_balance = state.interest_tally_no_account.round_dp(DECIMAL_PRECISION);
+    let mut payouts_by_account: HashMap<Option<Uuid>, Decimal> = HashMap::new();
+    let mut cleared_term_ids: Vec<Uuid> = Vec::new();
 
-    if !state.recorded_transaction_keys.contains(&transaction_key) {
-        let tx = build_interest_transaction(&state.account, &None, payment_date, rounded_balance);
-        add_transaction_and_record_deltas(books, tx, state_index_by_account, pending_deltas);
+    for term_id in term_ids {        
+        let Some(term) = state.term_by_id.get(&term_id) else { continue };
+        if term.is_end_of_interest_period(period_end_date) {
+
+            let balance = state.interest_tally_by_term.get(&term_id).copied().unwrap_or(dec!(0));
+            if balance > dec!(0) {
+                payouts_by_account
+                    .entry(term.interest_account_id)
+                    .and_modify(|total| *total += balance)
+                    .or_insert(balance);
+            }
+
+            cleared_term_ids.push(term_id);
+        }
     }
 
-    let paid_amount = state
-        .recorded_transaction_amounts
-        .get(&transaction_key)
-        .copied()
-        .unwrap_or(rounded_balance);
-    state.interest_paid += paid_amount;
-    state.interest_tally_no_account = dec!(0);
-    
-    // Reset interest_paid to zero for next month's calculation
-    state.interest_paid = dec!(0);
+    if !payouts_by_account.is_empty() {
+        let payment_date = period_end_date.succ_opt().unwrap();
+        for (interest_account_id, balance) in payouts_by_account {
+            let transaction_key = (payment_date, interest_account_id);
+            let rounded_balance = balance.round_dp(DECIMAL_PRECISION);
+
+            if !state.recorded_transaction_keys.contains(&transaction_key) {
+                let interest_account = interest_account_id.and_then(|id| books.get_account(&id).ok());
+                let tx = build_interest_transaction(&state.account, &interest_account, payment_date, rounded_balance);
+                add_transaction_and_record_deltas(books, tx, state_index_by_account, pending_deltas);
+            }
+        }
+    }
+
+    for term_id in cleared_term_ids {
+        state.interest_tally_by_term.insert(term_id, dec!(0));
+        state.interest_paid_by_term.insert(term_id, dec!(0));
+    }
 }
 
 #[cfg(test)]
@@ -861,68 +815,68 @@ let transactions = books.transactions().iter().filter(|t| t.source_type == Some(
         assert_eq!(transactions[1].entries[1].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
     }
 
-    // #[test]
-    // fn calculate_tiered_interest_daily_paid_mid_month() {
-    //     let mut books = Books::build_empty("My Books");
-    //     let mut savings_account = Account::create_new("Savings Account 1", AccountType::Asset);
-    //     savings_account.starting_balance = dec!(10000);
-    //     books.add_account(savings_account.clone());
+    #[test]
+    fn calculate_tiered_interest_daily_paid_mid_month() {
+        let mut books = Books::build_empty("My Books");
+        let mut savings_account = Account::create_new("Savings Account 1", AccountType::Asset);
+        savings_account.starting_balance = dec!(10000);
+        books.add_account(savings_account.clone());
         
-    //     let mut transaction_account = Account::create_new("Transaction Account 1", AccountType::Asset);
-    //     transaction_account.starting_balance = dec!(10000);
-    //     books.add_account(transaction_account.clone());
+        let mut transaction_account = Account::create_new("Transaction Account 1", AccountType::Asset);
+        transaction_account.starting_balance = dec!(10000);
+        books.add_account(transaction_account.clone());
         
-    //     let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(100)));
-    //     let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 10).unwrap(), "Deposit", dec!(200)));
-    //     let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(savings_account.id), NaiveDate::from_ymd_opt(2022, 2, 15).unwrap(), "Withdrawal", dec!(2000)));
+        let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 15).unwrap(), "Deposit", dec!(100)));
+        let _ = books.add_transaction(build_transaction(Some(savings_account.id), Some(transaction_account.id), NaiveDate::from_ymd_opt(2022, 1, 15).unwrap(), "Deposit", dec!(200)));
+        let _ = books.add_transaction(build_transaction(Some(transaction_account.id), Some(savings_account.id), NaiveDate::from_ymd_opt(2022, 2, 15).unwrap(), "Withdrawal", dec!(2000)));
 
-    //     let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
-    //     books.add_account(interest_earned.clone());
+        let interest_earned = Account::create_new("Interest Earned", AccountType::Revenue);        
+        books.add_account(interest_earned.clone());
 
-    //     let tier_1_terms = InterestTerms::from_components(
-    //         NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
-    //         None,
-    //         dec!(0.05),
-    //         InterestType::Daily,
-    //         None,
-    //         Some(dec!(10000)),    
-    //         ScheduleEnum::Months,
-    //         1,
-    //         7,
-    //         "Interest payment".to_string(),
-    //         Some(interest_earned.id)
-    //     );
-    //     let tier_2_terms = InterestTerms::from_components(
-    //         NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
-    //         None,
-    //         dec!(0.06),
-    //         InterestType::Daily,
-    //         Some(dec!(10000)),
-    //         None,    
-    //         ScheduleEnum::Months,
-    //         1,
-    //         29,
-    //         "Interest payment".to_string(),
-    //         Some(interest_earned.id)
-    //     );
-    //     let interest = Interest::from_components(vec![tier_1_terms, tier_2_terms], savings_account.id);        
-    //     calculate_interest_wrapper(&mut books, interest, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
-    //     let transactions = books.transactions().iter().filter(|t| t.source_type == Some(Source::Interest)).collect::<Vec<_>>();
+        let tier_1_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
+            None,
+            dec!(0.05),
+            InterestType::Daily,
+            None,
+            Some(dec!(10000)),    
+            ScheduleEnum::Months,
+            1,
+            7,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let tier_2_terms = InterestTerms::from_components(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),            
+            None,
+            dec!(0.06),
+            InterestType::Daily,
+            Some(dec!(10000)),
+            None,    
+            ScheduleEnum::Months,
+            1,
+            29,
+            "Interest payment".to_string(),
+            Some(interest_earned.id)
+        );
+        let interest = Interest::from_components(vec![tier_1_terms, tier_2_terms], savings_account.id);        
+        calculate_interest_wrapper(&mut books, interest, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+        let transactions = books.transactions().iter().filter(|t| t.source_type == Some(Source::Interest)).collect::<Vec<_>>();
 
-    //     assert_eq!(transactions.len(), 4);
-    //     assert_eq!(transactions[0].entries[0].amount, dec!(8.22));
-    //     assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 7).unwrap());
+        assert_eq!(transactions.len(), 4);
+        assert_eq!(transactions[0].entries[0].amount, dec!(8.22));
+        assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 7).unwrap());
 
-    //     assert_eq!(transactions[1].entries[0].amount, dec!(0.80));
-    //     assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 29).unwrap());
+        assert_eq!(transactions[1].entries[0].amount, dec!(0.72));
+        assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 1, 29).unwrap());
 
-    //     assert_eq!(transactions[0].entries[0].amount, dec!(42.47));
-    //     assert_eq!(transactions[0].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 7).unwrap());
+        assert_eq!(transactions[2].entries[0].amount, dec!(42.47));
+        assert_eq!(transactions[2].entries[0].date, NaiveDate::from_ymd_opt(2022, 2, 7).unwrap());
 
-    //     assert_eq!(transactions[1].entries[0].amount, dec!(0.76));
-    //     assert_eq!(transactions[1].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
+        assert_eq!(transactions[3].entries[0].amount, dec!(0.92));
+        assert_eq!(transactions[3].entries[0].date, NaiveDate::from_ymd_opt(2022, 3, 1).unwrap());
 
-    // }
+    }
 
     #[test]
     fn calculate_interest_recalculates_from_today() {
