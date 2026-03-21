@@ -5,6 +5,7 @@ errors:
   account_starting_balance_immutable_after_reconciliation: "Account starting balance can not be modified once it has been reconciled."
   account_cannot_delete_with_transactions: "Account %{id} can not be deleted as it has transactions."
   invalid_cr_account: "Invalid CR account"
+  invalid_account_type: "The provided account (%{name}) does not match the requried account type."
   interest_info_not_found: "Interest info not found for id: %{id}."
   reconciliation_rollback_requires_balances: "Reconciliation rollback requires balances."
   transaction_requires_two_entries: "A transaction needs at least two entries (double entry required is on)."

@@ -30,7 +30,7 @@ pub struct InterestTerms  {
     pub end_date: Option<NaiveDate>,
     pub rate: Decimal,
     pub calculated: InterestType,   
-    pub min_balance: Option<Decimal>,   // Defaults to 0
+    pub min_balance: Option<Decimal>,       // Defaults to 0
     pub max_balance: Option<Decimal>,
     pub paid_period: ScheduleEnum,     
     pub paid_frequency: i32,

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::books_error;
 
-use crate::account::{Account, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
+use crate::account::{Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
 use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, TargetResult};
 use crate::schedule::{Modifier, Schedule};
@@ -160,44 +160,36 @@ impl Books {
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
-
-        if let Some(value) = self.validate_transaction(&transaction) {
-            return value;
-        }
-
+        self.validate_transaction(&transaction)?;
         self.flag_interest_outdated(&transaction);
         self.transactions.push(transaction);
         Ok(())
     }
 
-    fn validate_transaction(&mut self, transaction: &Transaction) -> Option<Result<(), BooksError>> {
+    fn validate_transaction(&mut self, transaction: &Transaction) -> Result<(), BooksError> {
 
         for e in transaction.entries.as_slice() {
-            if !self.valid_account_id(Some(e.account_id)) {
-                return Some(Err(books_error!("errors.account_not_found", id => e.account_id)))
-            }
+            self.valid_account_id(e.account_id)?;
         }
 
         if self.settings.require_double_entry && transaction.entries.len() < 2 {
-            return Some(Err(books_error!("errors.transaction_requires_two_entries")))
+            return Err(books_error!("errors.transaction_requires_two_entries"))
         } else if transaction.entries.len() < 1 {
-            return Some(Err(books_error!("errors.transaction_requires_one_entry")))
+            return Err(books_error!("errors.transaction_requires_one_entry"))
         }
 
         // Using transaction date to avoid potential reconciliation edge case for split date entries.
         if transaction.status == TransactionStatus::Recorded && transaction.date() > Some(chrono::Utc::now().date_naive()) {
-            return Some(Err(books_error!("errors.future_transaction_set_as_recorded")))
+            return Err(books_error!("errors.future_transaction_set_as_recorded"))
         }
 
-        if !self.valid_account_id(Some(transaction.entries[0].account_id)) {
-            return Some(Err(books_error!("errors.account_not_found", id => transaction.entries[0].account_id)))
-        }
+        self.valid_account_id(transaction.entries[0].account_id)?;
 
         // Check that no account has more than one entry in the transaction.
         let mut account_ids = std::collections::HashSet::new();
         for entry in &transaction.entries {
             if !account_ids.insert(entry.account_id) {
-                return Some(Err(books_error!("errors.transaction_single_entry_per_account")));
+                return Err(books_error!("errors.transaction_single_entry_per_account"));
             }
         }
         
@@ -208,7 +200,7 @@ impl Books {
                 if original_entry.is_reconciled_or_outstanding() {
                     let matching_entry = transaction.entries.iter().find(|e| e.account_id == original_entry.account_id);
                     if matching_entry.is_none() || matching_entry.unwrap() != original_entry {
-                        return Some(Err(books_error!("errors.reconciled_entry_immutable")))
+                        return Err(books_error!("errors.reconciled_entry_immutable"))
                     }
                 }
             }
@@ -231,21 +223,19 @@ impl Books {
                 if let Some(account) = self.accounts.get(&entry.account_id) {
                     if let Some(reconciliation_info) = &account.reconciliation_info {
                         if reconciliation_info.date > entry.date {
-                            return Some(Err(books_error!("errors.transaction_before_reconciliation_date", transaction_date = entry.date, reconciliation_date = reconciliation_info.date)));
+                            return Err(books_error!("errors.transaction_before_reconciliation_date", transaction_date = entry.date, reconciliation_date = reconciliation_info.date));
                         }
                     }
                 }
             }
         }
             
-        None
+        Ok(())
     }
 
     pub fn update_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
 
-        if let Some(value) = self.validate_transaction(&transaction) {
-            return value;
-        }
+        self.validate_transaction(&transaction)?;
 
         if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
             self.flag_interest_outdated(&transaction);
@@ -260,9 +250,7 @@ impl Books {
 
     fn reconcile_transaction(&mut self, mut transaction: Transaction, account_id: Uuid, status: ReconciledStatus) -> Result<(), BooksError> {
 
-        if let Some(value) = self.validate_transaction(&transaction) {
-            return value;
-        }
+        self.validate_transaction(&transaction)?;
         
         let transaction_id = transaction.id;
 
@@ -401,34 +389,26 @@ impl Books {
 
 
     pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
-        if let Some(value) = self.validate_schedule(&schedule) {
-            return value;
-        }
-
+        self.validate_schedule(&schedule)?;
         self.scheduler.add_schedule(schedule);
         Ok(())
     }
 
-    fn validate_schedule(&mut self, schedule: &Schedule) -> Option<Result<(), BooksError>> {
+    fn validate_schedule(&mut self, schedule: &Schedule) -> Result<(), BooksError> {
 
         if schedule.entries.len() < 1 {
-            return Some(Err(books_error!("errors.schedule_requires_entry")))
+            return Err(books_error!("errors.schedule_requires_entry"))
         }
 
         for e in schedule.entries.iter() {
-            if !self.valid_account_id(Some(e.account_id)) {
-                return Some(Err(books_error!("errors.account_not_found", id => e.account_id)))
-            }
+            self.valid_account_id(e.account_id)?;
         }
 
-        None
+        Ok(())
     }
 
     pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
-        if let Some(value) = self.validate_schedule(&schedule) {
-            return value;
-        }
-
+        self.validate_schedule(&schedule)?;
         self.scheduler.update_schedule(schedule)
     }
 
@@ -537,6 +517,7 @@ impl Books {
 
         if let Some(account) = self.accounts.get_mut(&interest.account_id) {
             account.interest_id = Some(interest.id);
+            self.validate_interest(&interest)?;
             self.check_recalculate_interest(&interest);
             self.interests.insert(interest.id, interest);
             Ok(())
@@ -553,10 +534,7 @@ impl Books {
     }
 
     pub fn update_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
-        if !self.accounts.contains_key(&interest.account_id) {
-            return Err(books_error!("errors.account_not_found", id => interest.account_id));
-        }
-        
+        self.validate_interest(&interest)?;        
         self.check_recalculate_interest(&interest);
 
         let account = self.accounts.get(&interest.account_id)
@@ -586,6 +564,33 @@ impl Books {
 
     pub fn interests(&self) -> Vec<&Interest> {
         self.interests.values().collect()
+    }
+
+
+    fn validate_interest(&mut self, interest: &Interest) -> Result<(), BooksError> {
+
+        self.valid_account_id(interest.account_id)?;
+        
+        for t in interest.terms.as_slice() {
+            
+            if let Some(interest_account_id) = t.interest_account_id {
+                self.valid_account_id(interest_account_id)?;
+                let account = self.get_account(&interest_account_id)?;
+                if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability {
+                    return Err(books_error!("errors.invalid_account_type", name => account.name))
+                }
+            }
+        
+            if let Some(income_account_id) = t.income_account_id {
+                self.valid_account_id(income_account_id)?;
+                let account = self.get_account(&income_account_id)?;
+                if account.account_type != AccountType::Revenue && account.account_type != AccountType::Expense {
+                    return Err(books_error!("errors.invalid_account_type", name => account.name))
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Result<Option<NaiveDate>, BooksError> {
@@ -939,11 +944,12 @@ impl Books {
 
         Ok(())
     }
-  
-    fn valid_account_id(&self, id: Option<Uuid>) -> bool {
-        match id {
-            Some(k) => return self.accounts.contains_key(&k),
-            None => return true
+
+    fn valid_account_id(&self, id: Uuid) -> Result<(), BooksError> {
+        if self.accounts.contains_key(&id) { 
+            Ok(()) 
+        } else {
+            Err(books_error!("errors.account_not_found", id => id))
         }
     }
 
