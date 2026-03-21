@@ -537,7 +537,7 @@ impl Books {
 
         if let Some(account) = self.accounts.get_mut(&interest.account_id) {
             account.interest_id = Some(interest.id);
-            self.recalculate_interest.insert(account.id);
+            self.check_recalculate_interest(&interest);
             self.interests.insert(interest.id, interest);
             Ok(())
         } else {
@@ -557,18 +557,31 @@ impl Books {
             return Err(books_error!("errors.account_not_found", id => interest.account_id));
         }
         
+        self.check_recalculate_interest(&interest);
+
         let account = self.accounts.get(&interest.account_id)
             .ok_or(books_error!("errors.account_not_found", id => interest.account_id))?;
         
-        self.recalculate_interest.insert(account.id);
-
         if let Some(interest_id) = account.interest_id {
-            self.interests.insert(interest_id, interest);
+            let old = self.interests.insert(interest_id, interest);
+            if let Some(old_interest) = old {
+                self.check_recalculate_interest(&old_interest);
+            }
         } else {
             self.add_interest(interest)?;
         }
         
         Ok(())
+    }
+
+    fn check_recalculate_interest(&mut self, interest: &Interest) {
+        self.recalculate_interest.insert(interest.account_id);
+
+        for t in &interest.terms {
+            if let Some(interest_account_id) = t.interest_account_id {
+                self.recalculate_interest.insert(interest_account_id);
+            }
+        }
     }
 
     pub fn interests(&self) -> Vec<&Interest> {
