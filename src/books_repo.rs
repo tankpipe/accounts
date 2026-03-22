@@ -1,8 +1,10 @@
 #![allow(dead_code)]
-use std::{path::Path, fs::File, io::Read};
+use std::{path::{Path, PathBuf}, fs::File, io::Read};
 use std::{fs, io};
 use std::collections::HashMap;
 use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+use fs2::FileExt;
 use serde_json::Value;
 use crate::books_error;
 use rust_decimal::Decimal;
@@ -114,10 +116,74 @@ fn load_previous_version_0_0_4(mut content: String) -> Result<Books, io::Error> 
 }
 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
+    let path = path.as_ref();
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Path must point to a file"))?;
+
+    let lock_path = parent.join(format!("{}.lock", file_name.to_string_lossy()));
+    let mut temp_path = unique_temp_path(parent, file_name);
+
     println!(">>>>>>>>>>>>>>>> Saving Books <<<<<<<<<<<<<<<<");
-    ::serde_json::to_writer(&File::create(path)?, &books)?;
+
+    let lock_file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)?;
+    lock_file.lock_exclusive()?;
+
+    // Avoid very unlikely collisions if a stale temp file with the same name exists.
+    while temp_path.exists() {
+        temp_path = unique_temp_path(parent, file_name);
+    }
+
+    let write_result = (|| -> io::Result<()> {
+        let mut temp_file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        ::serde_json::to_writer(&mut temp_file, books)?;
+        temp_file.write_all(b"\n")?;
+        temp_file.sync_all()?;
+        drop(temp_file);
+
+        fs::rename(&temp_path, path)?;
+
+        #[cfg(unix)]
+        {
+            if let Ok(dir) = File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    let unlock_result = lock_file.unlock();
+    write_result?;
+    unlock_result?;
+
     println!(">>>>>>>>>>>>>>>> Saved Books  <<<<<<<<<<<<<<<<");
     Ok(())
+}
+
+fn unique_temp_path(parent: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    parent.join(format!(
+        "{}.tmp.{}.{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        nanos
+    ))
 }
 
 pub fn export_to_csv<P: AsRef<Path>>(
@@ -496,5 +562,19 @@ mod tests {
         assert!(rows.iter().all(|row| row.trim_end().ends_with(",,")) == false);
         assert!(rows.iter().any(|row| row.ends_with(",10000.00")));
         assert!(rows.iter().any(|row| row.ends_with(",9901.01")));
+    }
+
+    #[test]
+    fn test_save_books_repeated_overwrite_remains_valid_json() {
+        let tmp_file = NamedTempFile::new().expect("create temp file");
+        let filepath = tmp_file.path();
+
+        for _ in 0..50 {
+            let books = build_books();
+            save_books(filepath, &books).expect("save books");
+
+            let result = load_books(filepath);
+            assert!(result.is_ok(), "saved file should remain parseable");
+        }
     }
 }
