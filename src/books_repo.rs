@@ -114,7 +114,9 @@ fn load_previous_version_0_0_4(mut content: String) -> Result<Books, io::Error> 
 }
 
 pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
-    let _ =::serde_json::to_writer(&File::create(path)?, &books)?;
+    println!(">>>>>>>>>>>>>>>> Saving Books <<<<<<<<<<<<<<<<");
+    ::serde_json::to_writer(&File::create(path)?, &books)?;
+    println!(">>>>>>>>>>>>>>>> Saved Books  <<<<<<<<<<<<<<<<");
     Ok(())
 }
 
