@@ -705,6 +705,8 @@ impl Books {
                 status,
                 balance: expected_balance,
                 matched_transaction_id: matched_id,
+                confidence: 0.0,
+                signals: Vec::new(),
             }));
         }
 
