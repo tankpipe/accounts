@@ -44,3 +44,5 @@ reconciliation:
     description_weak_similarity: "Description weak similarity."
     balance_aligns: "Balance aligns."
     balance_differs: "Balance differs."
+    unmatched_closest_candidate: "No exact match. Closest existing transaction is %{days} day(s) away."
+    unmatched_no_nearby_candidates: "No strong nearby candidate transaction found."

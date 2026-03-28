@@ -7,7 +7,7 @@ use crate::books_error;
 
 use crate::account::{Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
-use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, TargetResult};
+use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, ReconciliationSignal, ReconciliationSignalCode, TargetResult};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -629,7 +629,12 @@ impl Books {
 
         // 2) Load existing account transactions (with balances) and track matched indices.
         let existing_txns = self.account_transactions(account_id)?;
-        let mut matched_indices: Vec<usize> = Vec::new();
+        let existing_targets: Vec<(usize, Uuid, Entry)> = existing_txns
+            .iter()
+            .enumerate()
+            .filter_map(|(i, txn)| txn.find_entry_by_account(&account_id).map(|target| (i, txn.id, target.clone())))
+            .collect();
+        let mut matched_indices: HashSet<usize> = HashSet::new();
 
         let mut results: Vec<ReconciliationItem> = Vec::with_capacity(input_txns.len() + existing_txns.len());
 
@@ -638,66 +643,54 @@ impl Books {
             let entry = input
                 .find_entry_by_account(&account_id)
                 .expect("transaction involves account");
-
-            let amount = entry.amount;
-            let entry_type = entry.entry_type;
-            let date = entry.date;
-            let description = &entry.description;
             let expected_balance = entry.balance;
 
-            // 4) Try exact match first; if none, try partial/mismatch rules.
-            let (status, matched_id) = existing_txns
-                .iter()
-                .enumerate()
-                .find(|(i, existing)| {
-                    !matched_indices.contains(i)
-                        && existing
-                            .find_entry_by_account(&account_id)
-                            .map(|e| {
-                                (e.date - date).num_days().abs() <= 14
-                                    && e.date == date
-                                    && e.amount == amount
-                                    && e.entry_type == entry_type
-                                    && e.balance == expected_balance
-                            })
-                            .unwrap_or(false)
-                })
-                .map(|(i, existing)| {
-                    matched_indices.push(i);
-                    (ReconciliationMatchStatus::Matched, Some(existing.id))
-                })
-                .or_else(|| {
-                    existing_txns.iter().enumerate().find_map(|(i, existing)| {
-                        if matched_indices.contains(&i) {
-                            return None;
+            // 4) Score candidate matches inline and choose the highest-confidence eligible target.
+            let mut best_candidate: Option<(usize, Uuid, MatchCandidate)> = None;
+            for (target_idx, target_txn_id, target_entry) in existing_targets.iter() {
+                if matched_indices.contains(target_idx) {
+                    continue;
+                }
+
+                if let Some(candidate) = evaluate_match_candidate(entry, target_entry) {
+                    match &best_candidate {
+                        None => {
+                            best_candidate = Some((*target_idx, *target_txn_id, candidate));
                         }
-                        existing.find_entry_by_account(&account_id).and_then(|e| {
-                            let within_14_days = (e.date - date).num_days().abs() <= 14;
-                            if !within_14_days {
-                                return None;
+                        Some((_, _, best_candidate_match)) => {
+                            let better_status = status_rank(&candidate.status) > status_rank(&best_candidate_match.status);
+                            let same_status = status_rank(&candidate.status) == status_rank(&best_candidate_match.status);
+                            if candidate.confidence > best_candidate_match.confidence
+                                || (candidate.confidence == best_candidate_match.confidence && better_status)
+                                || (candidate.confidence == best_candidate_match.confidence
+                                    && same_status
+                                    && candidate.status == ReconciliationMatchStatus::Matched)
+                            {
+                                best_candidate = Some((*target_idx, *target_txn_id, candidate));
                             }
-                            let date_match = (e.date - date).num_days().abs() <= 1;
-                            let amount_match = e.amount == amount;
-                            let description_match = e.description == *description;
-                            let balance_match = e.balance == expected_balance;
-                            let other_match_count = [date_match, amount_match, description_match]
-                                .into_iter()
-                                .filter(|&b| b)
-                                .count();
-                            if other_match_count >= 2 {
-                                matched_indices.push(i);
-                                if balance_match {
-                                    Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
-                                } else {
-                                    Some((ReconciliationMatchStatus::Mismatch, Some(existing.id)))
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                })
-                .unwrap_or((ReconciliationMatchStatus::Unmatched, None));
+                        }
+                    }
+                }
+            }
+
+            let (status, matched_id, confidence, signals) = if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
+                matched_indices.insert(match_idx);
+                (
+                    candidate.status,
+                    Some(matched_txn_id),
+                    candidate.confidence,
+                    candidate.signals,
+                )
+            } else {
+                let (confidence, signals) = score_unmatched_reconciliation(
+                    entry,
+                    existing_targets
+                        .iter()
+                        .filter(|(idx, _, _)| !matched_indices.contains(idx))
+                        .map(|(_, _, candidate)| candidate),
+                );
+                (ReconciliationMatchStatus::Unmatched, None, confidence, signals)
+            };
 
             // 5) Record this input transaction's reconciliation outcome.
             results.push(ReconciliationItem::Reconciliation(ReconciliationResult {
@@ -705,8 +698,8 @@ impl Books {
                 status,
                 balance: expected_balance,
                 matched_transaction_id: matched_id,
-                confidence: 0.0,
-                signals: Vec::new(),
+                confidence,
+                signals,
             }));
         }
 
@@ -831,6 +824,13 @@ impl Books {
                 ReconciliationMatchStatus::Matched | ReconciliationMatchStatus::PartialMatch => {
                     for idx in mismatched_indices.drain(..) {
                         final_results[idx].set_status(ReconciliationMatchStatus::PartialMatch);
+                        if let ReconciliationItem::Reconciliation(recon) = &mut final_results[idx] {
+                            recon.confidence = adjust_confidence_for_status(
+                                recon.confidence,
+                                ReconciliationMatchStatus::Mismatch,
+                                ReconciliationMatchStatus::PartialMatch,
+                            );
+                        }
                     }
                 }
             }
@@ -984,6 +984,306 @@ impl Books {
         Ok(())
     }
     
+}
+
+struct MatchCandidate {
+    status: ReconciliationMatchStatus,
+    confidence: f32,
+    signals: Vec<ReconciliationSignal>,
+}
+
+fn evaluate_match_candidate(
+    rec_entry: &Entry,
+    target_entry: &Entry,
+) -> Option<MatchCandidate> {
+    let within_14_days = (target_entry.date - rec_entry.date).num_days().abs() <= 14;
+    if !within_14_days {
+        return None;
+    }
+
+    let date_match = (target_entry.date - rec_entry.date).num_days().abs() <= 1;
+    let amount_match = target_entry.amount == rec_entry.amount;
+    let description_match = target_entry.description == rec_entry.description;
+    let balance_match = target_entry.balance == rec_entry.balance;
+    let date_diff = (rec_entry.date - target_entry.date).num_days().abs();
+    let desc_similarity = reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
+    let has_balances = rec_entry.balance.is_some() && target_entry.balance.is_some();
+    let balance_exact_match = has_balances && balance_match;
+
+    // Aggregate feature evidence so status selection is driven by the same signals used for scoring.
+    let mut evidence_score: i32 = 0;
+    if amount_match {
+        evidence_score += 3;
+    } else {
+        evidence_score -= 3;
+    }
+    if rec_entry.entry_type == target_entry.entry_type {
+        evidence_score += 2;
+    } else {
+        evidence_score -= 2;
+    }
+    if date_diff == 0 {
+        evidence_score += 2;
+    } else if date_diff <= 1 {
+        evidence_score += 1;
+    } else if date_diff <= 3 {
+        evidence_score += 0;
+    } else if date_diff > 7 {
+        evidence_score -= 1;
+    }
+    if desc_similarity > 0.8 {
+        evidence_score += 2;
+    } else if desc_similarity > 0.5 {
+        evidence_score += 1;
+    } else if desc_similarity < 0.25 {
+        evidence_score -= 1;
+    }
+    if has_balances {
+        if balance_exact_match {
+            evidence_score += 2;
+        } else {
+            evidence_score -= 2;
+        }
+    }
+
+    let status = if target_entry.date == rec_entry.date
+        && amount_match
+        && target_entry.entry_type == rec_entry.entry_type
+        && balance_match
+    {
+        ReconciliationMatchStatus::Matched
+    } else {
+        let other_match_count = [date_match, amount_match, description_match]
+            .into_iter()
+            .filter(|&b| b)
+            .count();
+        if other_match_count >= 2 {
+            if evidence_score >= 4 {
+                if has_balances && !balance_exact_match {
+                    ReconciliationMatchStatus::Mismatch
+                } else {
+                    ReconciliationMatchStatus::PartialMatch
+                }
+            } else if evidence_score >= 2 {
+                ReconciliationMatchStatus::Mismatch
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    };
+
+    let mut score = status_base_confidence(&status);
+    let mut signals: Vec<ReconciliationSignal> = Vec::new();
+    let amount_exact_match = rec_entry.amount == target_entry.amount;
+    let side_match = rec_entry.entry_type == target_entry.entry_type;
+
+    if amount_exact_match {
+        score += 0.12;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::AmountExactMatch,
+        ));
+    } else {
+        score -= 0.15;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::AmountDiffers,
+        ));
+    }
+
+    if side_match {
+        score += 0.08;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::SideMatches,
+        ));
+    } else {
+        score -= 0.1;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::SideDiffers,
+        ));
+    }
+
+    if date_diff == 0 {
+        score += 0.08;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DateExactMatch,
+        ));
+    } else if date_diff <= 1 {
+        score += 0.05;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DateWithin1Day,
+        ));
+    } else if date_diff <= 3 {
+        score += 0.02;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DateWithin3Days,
+        ));
+    } else if date_diff > 7 {
+        score -= 0.05;
+        signals.push(ReconciliationSignal::with_days(
+            ReconciliationSignalCode::DateDiffersByDays,
+            date_diff,
+        ));
+    }
+
+    if desc_similarity > 0.8 {
+        score += 0.09;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DescriptionHighSimilarity,
+        ));
+    } else if desc_similarity > 0.5 {
+        score += 0.04;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DescriptionModerateSimilarity,
+        ));
+    } else if desc_similarity < 0.25 {
+        score -= 0.05;
+        signals.push(ReconciliationSignal::new(
+            ReconciliationSignalCode::DescriptionWeakSimilarity,
+        ));
+    }
+
+    if has_balances {
+        if balance_exact_match {
+            score += 0.1;
+            signals.push(ReconciliationSignal::new(
+                ReconciliationSignalCode::BalanceAligns,
+            ));
+        } else {
+            score -= 0.08;
+            signals.push(ReconciliationSignal::new(
+                ReconciliationSignalCode::BalanceDiffers,
+            ));
+        }
+    }
+
+    Some(MatchCandidate {
+        status,
+        confidence: clamp_reconciliation_confidence(score),
+        signals,
+    })
+}
+
+fn score_unmatched_reconciliation<'a, I>(rec_entry: &Entry, candidates: I) -> (f32, Vec<ReconciliationSignal>)
+where
+    I: Iterator<Item = &'a Entry>,
+{
+    let mut signals: Vec<ReconciliationSignal> = vec![ReconciliationSignal::new(
+        ReconciliationSignalCode::NoLinkedTargetTransaction,
+    )];
+    signals.push(build_unmatched_signal(rec_entry, candidates));
+    (clamp_reconciliation_confidence(status_base_confidence(&ReconciliationMatchStatus::Unmatched)), signals)
+}
+
+fn build_unmatched_signal<'a, I>(rec_entry: &Entry, candidates: I) -> ReconciliationSignal
+where
+    I: Iterator<Item = &'a Entry>,
+{
+    let mut best_candidate: Option<(i32, i64)> = None;
+
+    for target in candidates {
+        let date_diff = (rec_entry.date - target.date).num_days().abs();
+        let desc_similarity = reconciliation_description_similarity(&rec_entry.description, &target.description);
+        let mut candidate_score = 0_i32;
+
+        if rec_entry.amount == target.amount {
+            candidate_score += 4;
+        }
+        if rec_entry.entry_type == target.entry_type {
+            candidate_score += 2;
+        }
+        if date_diff == 0 {
+            candidate_score += 3;
+        } else if date_diff <= 1 {
+            candidate_score += 2;
+        } else if date_diff <= 3 {
+            candidate_score += 1;
+        }
+        if desc_similarity > 0.8 {
+            candidate_score += 2;
+        } else if desc_similarity > 0.5 {
+            candidate_score += 1;
+        }
+
+        match best_candidate {
+            None => best_candidate = Some((candidate_score, date_diff)),
+            Some((best_score, best_diff)) => {
+                if candidate_score > best_score || (candidate_score == best_score && date_diff < best_diff) {
+                    best_candidate = Some((candidate_score, date_diff));
+                }
+            }
+        }
+    }
+
+    if let Some((score, date_diff)) = best_candidate {
+        if score >= 4 {
+            return ReconciliationSignal::with_days(
+                ReconciliationSignalCode::UnmatchedClosestCandidate,
+                date_diff,
+            );
+        }
+    }
+
+    ReconciliationSignal::new(ReconciliationSignalCode::UnmatchedNoNearbyCandidates)
+}
+
+fn reconciliation_description_similarity(a: &str, b: &str) -> f32 {
+    let a_tokens = tokenize_reconciliation_description(a);
+    let b_tokens = tokenize_reconciliation_description(b);
+    if a_tokens.is_empty() && b_tokens.is_empty() {
+        return 1.0;
+    }
+    if a_tokens.is_empty() || b_tokens.is_empty() {
+        return 0.0;
+    }
+
+    let intersection = a_tokens.intersection(&b_tokens).count() as f32;
+    let union = a_tokens.union(&b_tokens).count() as f32;
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn tokenize_reconciliation_description(description: &str) -> HashSet<String> {
+    description
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_string())
+        .collect()
+}
+
+fn clamp_reconciliation_confidence(value: f32) -> f32 {
+    value.max(0.0).min(0.99)
+}
+
+fn status_base_confidence(status: &ReconciliationMatchStatus) -> f32 {
+    match status {
+        ReconciliationMatchStatus::Matched => 0.78,
+        ReconciliationMatchStatus::PartialMatch => 0.55,
+        ReconciliationMatchStatus::Mismatch => 0.32,
+        ReconciliationMatchStatus::Unmatched => 0.08,
+    }
+}
+
+fn adjust_confidence_for_status(
+    current_confidence: f32,
+    old_status: ReconciliationMatchStatus,
+    new_status: ReconciliationMatchStatus,
+) -> f32 {
+    let delta = status_base_confidence(&new_status) - status_base_confidence(&old_status);
+    clamp_reconciliation_confidence(current_confidence + delta)
+}
+
+fn status_rank(status: &ReconciliationMatchStatus) -> u8 {
+    match status {
+        ReconciliationMatchStatus::Matched => 3,
+        ReconciliationMatchStatus::PartialMatch => 2,
+        ReconciliationMatchStatus::Mismatch => 1,
+        ReconciliationMatchStatus::Unmatched => 0,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
