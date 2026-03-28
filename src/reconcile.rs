@@ -1,3 +1,4 @@
+use core::f32;
 use std::collections::{HashMap, HashSet};
 
 use rust_decimal::Decimal;
@@ -14,6 +15,24 @@ pub enum ReconciliationMatchStatus {
     PartialMatch,
     Mismatch,
     Unmatched,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Field {
+    Amount,      // deviation in currency (dollars)
+    Side,        // deviation in boolean [0|1]
+    Date,        // deviation in days
+    Description, // deviation in text similarity (0.0 to 1.0)
+    Balance,     // deviation in currency (dollars)
+}
+
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct Signal {
+    pub field: Field,
+    pub deviation: f32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
