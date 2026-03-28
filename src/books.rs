@@ -7,7 +7,7 @@ use crate::books_error;
 
 use crate::account::{Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
-use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, ReconciliationSignal, ReconciliationSignalCode, TargetResult};
+use crate::reconcile::{Field, ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, Signal, TargetResult};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -989,7 +989,7 @@ impl Books {
 struct MatchCandidate {
     status: ReconciliationMatchStatus,
     confidence: f32,
-    signals: Vec<ReconciliationSignal>,
+    signals: Vec<Signal>,
 }
 
 fn evaluate_match_candidate(
@@ -1075,85 +1075,58 @@ fn evaluate_match_candidate(
     };
 
     let mut score = status_base_confidence(&status);
-    let mut signals: Vec<ReconciliationSignal> = Vec::new();
+    let mut signals: Vec<Signal> = Vec::new();
     let amount_exact_match = rec_entry.amount == target_entry.amount;
     let side_match = rec_entry.entry_type == target_entry.entry_type;
 
     if amount_exact_match {
         score += 0.12;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::AmountExactMatch,
-        ));
+        signals.push(Signal::new(Field::Amount, 0.0));
     } else {
         score -= 0.15;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::AmountDiffers,
-        ));
+        signals.push(Signal::new(Field::Amount, 1.0));
     }
 
     if side_match {
         score += 0.08;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::SideMatches,
-        ));
+        signals.push(Signal::new(Field::Side, 0.0));
     } else {
         score -= 0.1;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::SideDiffers,
-        ));
+        signals.push(Signal::new(Field::Side, 1.0));
     }
 
     if date_diff == 0 {
         score += 0.08;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DateExactMatch,
-        ));
+        signals.push(Signal::new(Field::Date, 0.0));
     } else if date_diff <= 1 {
         score += 0.05;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DateWithin1Day,
-        ));
+        signals.push(Signal::new(Field::Date, date_diff as f32));
     } else if date_diff <= 3 {
         score += 0.02;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DateWithin3Days,
-        ));
+        signals.push(Signal::new(Field::Date, date_diff as f32));
     } else if date_diff > 7 {
         score -= 0.05;
-        signals.push(ReconciliationSignal::with_days(
-            ReconciliationSignalCode::DateDiffersByDays,
-            date_diff,
-        ));
+        signals.push(Signal::new(Field::Date, date_diff as f32));
     }
 
     if desc_similarity > 0.8 {
         score += 0.09;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DescriptionHighSimilarity,
-        ));
+        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
     } else if desc_similarity > 0.5 {
         score += 0.04;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DescriptionModerateSimilarity,
-        ));
+        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
     } else if desc_similarity < 0.25 {
         score -= 0.05;
-        signals.push(ReconciliationSignal::new(
-            ReconciliationSignalCode::DescriptionWeakSimilarity,
-        ));
+        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
     }
 
     if has_balances {
         if balance_exact_match {
             score += 0.1;
-            signals.push(ReconciliationSignal::new(
-                ReconciliationSignalCode::BalanceAligns,
-            ));
+            signals.push(Signal::new(Field::Balance, 0.0));
         } else {
             score -= 0.08;
-            signals.push(ReconciliationSignal::new(
-                ReconciliationSignalCode::BalanceDiffers,
-            ));
+            signals.push(Signal::new(Field::Balance, 1.0));
         }
     }
 
@@ -1164,18 +1137,16 @@ fn evaluate_match_candidate(
     })
 }
 
-fn score_unmatched_reconciliation<'a, I>(rec_entry: &Entry, candidates: I) -> (f32, Vec<ReconciliationSignal>)
+fn score_unmatched_reconciliation<'a, I>(rec_entry: &Entry, candidates: I) -> (f32, Vec<Signal>)
 where
     I: Iterator<Item = &'a Entry>,
 {
-    let mut signals: Vec<ReconciliationSignal> = vec![ReconciliationSignal::new(
-        ReconciliationSignalCode::NoLinkedTargetTransaction,
-    )];
+    let mut signals: Vec<Signal> = vec![Signal::new(Field::Linkage, -1.0)];
     signals.push(build_unmatched_signal(rec_entry, candidates));
     (clamp_reconciliation_confidence(status_base_confidence(&ReconciliationMatchStatus::Unmatched)), signals)
 }
 
-fn build_unmatched_signal<'a, I>(rec_entry: &Entry, candidates: I) -> ReconciliationSignal
+fn build_unmatched_signal<'a, I>(rec_entry: &Entry, candidates: I) -> Signal
 where
     I: Iterator<Item = &'a Entry>,
 {
@@ -1217,14 +1188,11 @@ where
 
     if let Some((score, date_diff)) = best_candidate {
         if score >= 4 {
-            return ReconciliationSignal::with_days(
-                ReconciliationSignalCode::UnmatchedClosestCandidate,
-                date_diff,
-            );
+            return Signal::new(Field::Candidate, date_diff as f32);
         }
     }
 
-    ReconciliationSignal::new(ReconciliationSignalCode::UnmatchedNoNearbyCandidates)
+    Signal::new(Field::Candidate, -1.0)
 }
 
 fn reconciliation_description_similarity(a: &str, b: &str) -> f32 {

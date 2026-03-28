@@ -8,7 +8,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use accounts::account::*;
     use accounts::books::{Books, BooksError, sort_transactions_by_account, TransactionSortOrder};
-    use accounts::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationSignalCode};
+    use accounts::reconcile::{Field, ReconciliationItem, ReconciliationMatchStatus};
     use accounts::schedule::{Schedule, ScheduleEnum, ScheduleEntry};
     
     // Helper function for creating BooksError for integration tests
@@ -831,13 +831,9 @@ mod tests {
                 assert_eq!(recon.status, ReconciliationMatchStatus::Unmatched);
                 assert_eq!(recon.matched_transaction_id, None);
                 assert!(recon.confidence > 0.0);
-                assert!(recon.signals.iter().any(|s| s.code == ReconciliationSignalCode::NoLinkedTargetTransaction));
+                assert!(recon.signals.iter().any(|s| s.field == Field::Linkage && s.deviation < 0.0));
                 assert!(recon.signals.iter().any(|s| {
-                    matches!(
-                        s.code,
-                        ReconciliationSignalCode::UnmatchedClosestCandidate
-                            | ReconciliationSignalCode::UnmatchedNoNearbyCandidates
-                    )
+                    s.field == Field::Candidate
                 }));
             }
             _ => panic!("expected reconciliation transaction"),
