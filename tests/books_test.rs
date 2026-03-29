@@ -982,6 +982,167 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_prepare_reconciliation_missing_statement_row_stays_unmatched() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let t1 = build_single_entry_transaction(account_id, NaiveDate::from_ymd_opt(2026, 2, 14).unwrap(), "T1", dec!(100), None);
+        let t2 = build_single_entry_transaction(account_id, NaiveDate::from_ymd_opt(2026, 2, 21).unwrap(), "T2", dec!(100), None);
+        let t21 = build_single_entry_transaction(account_id, NaiveDate::from_ymd_opt(2026, 2, 21).unwrap(), "T2.1", dec!(100), None);
+        let t3 = build_single_entry_transaction(account_id, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap(), "T3", dec!(100), None);
+        let t4 = build_single_entry_transaction(account_id, NaiveDate::from_ymd_opt(2026, 3, 7).unwrap(), "T4", dec!(100.48), None);
+
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+        books.add_transaction(t21.clone()).unwrap();
+        books.add_transaction(t3.clone()).unwrap();
+        books.add_transaction(t4.clone()).unwrap();
+
+        let reconciliation_rows = vec![
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2026, 2, 14).unwrap(),
+                "T1",
+                dec!(100),
+                Some(dec!(100)),
+            ),
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2026, 2, 15).unwrap(),
+                "Missing",
+                dec!(50),
+                Some(dec!(150)),
+            ),
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2026, 2, 21).unwrap(),
+                "T2.1",
+                dec!(100),
+                Some(dec!(250)),
+            ),
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2026, 2, 27).unwrap(),
+                "T3",
+                dec!(100),
+                Some(dec!(350)),
+            ),
+        ];
+
+        let results = books.prepare_reconciliation(account_id, reconciliation_rows).unwrap();
+
+        let missing_reconciliation = results
+            .iter()
+            .filter_map(|item| {
+                if let ReconciliationItem::Reconciliation(recon) = item {
+                    let entry = recon.transaction.find_entry_by_account(&account_id)?;
+                    if entry.description == "Missing" {
+                        return Some(recon);
+                    }
+                }
+                None
+            })
+            .next()
+            .expect("Missing row should exist in reconciliation output");
+
+        assert_eq!(missing_reconciliation.status, ReconciliationMatchStatus::Unmatched);
+        assert_eq!(missing_reconciliation.matched_transaction_id, None);
+
+        let t21_reconciliation = results
+            .iter()
+            .filter_map(|item| {
+                if let ReconciliationItem::Reconciliation(recon) = item {
+                    let entry = recon.transaction.find_entry_by_account(&account_id)?;
+                    if entry.description == "T2.1" {
+                        return Some(recon);
+                    }
+                }
+                None
+            })
+            .next()
+            .expect("T2.1 row should exist in reconciliation output");
+
+        assert_eq!(t21_reconciliation.matched_transaction_id, Some(t21.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_red_lobster_missing_does_not_steal_match() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let water_txn = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2024, 4, 19).unwrap(),
+            "Water",
+            dec!(35.60),
+            None,
+        );
+        let amazon_txn = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2024, 4, 21).unwrap(),
+            "Amazon",
+            dec!(89.45),
+            None,
+        );
+
+        books.add_transaction(water_txn.clone()).unwrap();
+        books.add_transaction(amazon_txn.clone()).unwrap();
+
+        let reconciliation_rows = vec![
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2024, 4, 8).unwrap(),
+                "RED LOBSTER #123",
+                dec!(38.75),
+                Some(dec!(3263.05)),
+            ),
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2024, 4, 20).unwrap(),
+                "DEPT OF WATER UTILITIES",
+                dec!(35.60),
+                Some(dec!(2866.91)),
+            ),
+            build_single_entry_transaction(
+                account_id,
+                NaiveDate::from_ymd_opt(2024, 4, 22).unwrap(),
+                "AMAZON.COM SEATTLE",
+                dec!(89.45),
+                Some(dec!(2777.46)),
+            ),
+        ];
+
+        let results = books.prepare_reconciliation(account_id, reconciliation_rows).unwrap();
+
+        let red_lobster = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => recon
+                    .transaction
+                    .find_entry_by_account(&account_id)
+                    .and_then(|e| (e.description == "RED LOBSTER #123").then_some(recon)),
+                _ => None,
+            })
+            .next()
+            .expect("RED LOBSTER row should exist");
+
+        assert_eq!(red_lobster.status, ReconciliationMatchStatus::Unmatched);
+        assert_eq!(red_lobster.matched_transaction_id, None);
+
+        let amazon_statement = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => recon
+                    .transaction
+                    .find_entry_by_account(&account_id)
+                    .and_then(|e| (e.description == "AMAZON.COM SEATTLE").then_some(recon)),
+                _ => None,
+            })
+            .next()
+            .expect("AMAZON.COM SEATTLE row should exist");
+
+        assert_eq!(amazon_statement.matched_transaction_id, Some(amazon_txn.id));
+    }
+
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {
         let new_id = Uuid::new_v4();
         Transaction {
@@ -1002,6 +1163,33 @@ mod tests {
                 })
                 .collect(),
             status: t.status,
+            source_type: None,
+            source_id: None,
+        }
+    }
+
+    fn build_single_entry_transaction(
+        account_id: Uuid,
+        date: NaiveDate,
+        description: &str,
+        amount: Decimal,
+        balance: Option<Decimal>,
+    ) -> Transaction {
+        let transaction_id = Uuid::new_v4();
+        Transaction {
+            id: transaction_id,
+            entries: vec![Entry {
+                id: Uuid::new_v4(),
+                transaction_id,
+                date,
+                description: description.to_string(),
+                account_id,
+                entry_type: Side::Debit,
+                amount,
+                balance,
+                reconciled_status: None,
+            }],
+            status: TransactionStatus::Recorded,
             source_type: None,
             source_id: None,
         }
