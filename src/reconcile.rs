@@ -20,13 +20,13 @@ pub enum ReconciliationMatchStatus {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
-    Amount,      // deviation in currency (dollars)
-    Side,        // deviation in boolean [0|1]
-    Date,        // deviation in days
-    Description, // deviation in text similarity (0.0 to 1.0)
-    Balance,     // deviation in currency (dollars)
-    Linkage,     // linkage quality to target transactions
-    Candidate,   // nearest-candidate diagnostics
+    Amount,
+    Side,
+    Date,
+    Description,
+    Balance,
+    Linkage,
+    Candidate,
 }
 
 
@@ -35,11 +35,37 @@ pub enum Field {
 pub struct Signal {
     pub field: Field,
     pub deviation: f32,
+    pub normalized_deviation: f32,
 }
 
 impl Signal {
     pub fn new(field: Field, deviation: f32) -> Self {
-        Self { field, deviation }
+        let normalized_deviation = normalize_signal_deviation(&field, deviation);
+        Self {
+            field,
+            deviation,
+            normalized_deviation,
+        }
+    }
+}
+
+fn normalize_signal_deviation(field: &Field, deviation: f32) -> f32 {
+    match field {
+        Field::Amount => deviation.abs().min(1.0),
+        Field::Side => deviation.abs().min(1.0),
+        Field::Date => (deviation.abs() / 14.0).min(1.0),
+        Field::Description => deviation.clamp(0.0, 1.0),
+        Field::Balance => deviation.abs().min(1.0),
+        // Linkage values use negative sentinels today: map severity to 0..1.
+        Field::Linkage => deviation.abs().min(1.0),
+        // Candidate uses days (>=0) or -1.0 when no useful candidate.
+        Field::Candidate => {
+            if deviation < 0.0 {
+                1.0
+            } else {
+                (deviation / 14.0).min(1.0)
+            }
+        }
     }
 }
 
@@ -144,60 +170,40 @@ fn score_item(
     let amount_match = rec_entry.amount == *target_amount;
     let side_match = rec_entry.entry_type == *target_side;
     let desc_similarity = description_similarity(&rec_entry.description, target_description);
-    let balance_match = rec_entry.balance.is_some() && rec_entry.balance == *target_balance;
+    let amount_deviation = bool_to_deviation(!amount_match);
+    score += 0.12 - (0.27 * amount_deviation);
+    signals.push(Signal::new(Field::Amount, amount_deviation));
 
-    if amount_match {
-        score += 0.12;
-        signals.push(Signal::new(Field::Amount, 0.0));
-    } else {
-        score -= 0.15;
-        signals.push(Signal::new(Field::Amount, 1.0));
-    }
+    let side_deviation = bool_to_deviation(!side_match);
+    score += 0.08 - (0.18 * side_deviation);
+    signals.push(Signal::new(Field::Side, side_deviation));
 
-    if side_match {
-        score += 0.08;
-        signals.push(Signal::new(Field::Side, 0.0));
-    } else {
-        score -= 0.1;
-        signals.push(Signal::new(Field::Side, 1.0));
-    }
+    let date_deviation = date_diff as f32;
+    let date_score = (0.02 * bool_to_deviation(date_diff <= 3))
+        + (0.03 * bool_to_deviation(date_diff <= 1))
+        + (0.03 * bool_to_deviation(date_diff == 0))
+        - (0.05 * bool_to_deviation(date_diff > 7));
+    score += date_score;
+    signals.push(Signal::new(Field::Date, date_deviation));
 
-    if date_diff == 0 {
-        score += 0.08;
-        signals.push(Signal::new(Field::Date, 0.0));
-    } else if date_diff <= 1 {
-        score += 0.05;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    } else if date_diff <= 3 {
-        score += 0.02;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    } else if date_diff > 7 {
-        score -= 0.05;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    }
-
-    if desc_similarity > 0.8 {
-        score += 0.09;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    } else if desc_similarity > 0.5 {
-        score += 0.04;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    } else if desc_similarity < 0.25 {
-        score -= 0.05;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    }
+    let description_deviation = 1.0 - desc_similarity;
+    let desc_score = (0.09 * bool_to_deviation(desc_similarity > 0.8))
+        + (0.04 * bool_to_deviation(desc_similarity > 0.5 && desc_similarity <= 0.8))
+        - (0.05 * bool_to_deviation(desc_similarity < 0.25));
+    score += desc_score;
+    signals.push(Signal::new(Field::Description, description_deviation));
 
     if rec_entry.balance.is_some() && target_balance.is_some() {
-        if balance_match {
-            score += 0.1;
-            signals.push(Signal::new(Field::Balance, 0.0));
-        } else {
-            score -= 0.08;
-            signals.push(Signal::new(Field::Balance, 1.0));
-        }
+        let balance_deviation = bool_to_deviation(rec_entry.balance != *target_balance);
+        score += 0.1 - (0.18 * balance_deviation);
+        signals.push(Signal::new(Field::Balance, balance_deviation));
     }
 
     (clamp_confidence(score), signals)
+}
+
+fn bool_to_deviation(value: bool) -> f32 {
+    if value { 1.0 } else { 0.0 }
 }
 
 fn description_similarity(a: &str, b: &str) -> f32 {
