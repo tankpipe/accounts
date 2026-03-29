@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::{collections::HashMap, cmp::Ordering};
 use chrono::NaiveDate;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::books_error;
@@ -992,6 +994,15 @@ struct MatchCandidate {
     signals: Vec<Signal>,
 }
 
+struct CandidateVariances {
+    amount: f32,
+    side: f32,
+    date: f32,
+    date_days: f32,
+    description: f32,
+    balance: Option<f32>,
+}
+
 fn evaluate_match_candidate(
     rec_entry: &Entry,
     target_entry: &Entry,
@@ -1001,140 +1012,104 @@ fn evaluate_match_candidate(
         return None;
     }
 
-    let date_match = (target_entry.date - rec_entry.date).num_days().abs() <= 1;
-    let amount_match = target_entry.amount == rec_entry.amount;
-    let description_match = target_entry.description == rec_entry.description;
-    let balance_match = target_entry.balance == rec_entry.balance;
-    let date_diff = (rec_entry.date - target_entry.date).num_days().abs();
-    let desc_similarity = reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
-    let has_balances = rec_entry.balance.is_some() && target_entry.balance.is_some();
-    let balance_exact_match = has_balances && balance_match;
+    let variances = calculate_candidate_variances(rec_entry, target_entry);
+    let confidence = variance_score(&variances);
 
-    // Aggregate feature evidence so status selection is driven by the same signals used for scoring.
-    let mut evidence_score: i32 = 0;
-    if amount_match {
-        evidence_score += 3;
-    } else {
-        evidence_score -= 3;
-    }
-    if rec_entry.entry_type == target_entry.entry_type {
-        evidence_score += 2;
-    } else {
-        evidence_score -= 2;
-    }
-    if date_diff == 0 {
-        evidence_score += 2;
-    } else if date_diff <= 1 {
-        evidence_score += 1;
-    } else if date_diff <= 3 {
-        evidence_score += 0;
-    } else if date_diff > 7 {
-        evidence_score -= 1;
-    }
-    if desc_similarity > 0.8 {
-        evidence_score += 2;
-    } else if desc_similarity > 0.5 {
-        evidence_score += 1;
-    } else if desc_similarity < 0.25 {
-        evidence_score -= 1;
-    }
-    if has_balances {
-        if balance_exact_match {
-            evidence_score += 2;
-        } else {
-            evidence_score -= 2;
-        }
-    }
+    let exact_match = variances.amount == 0.0
+        && variances.side == 0.0
+        && variances.date_days == 0.0
+        && variances.description <= 0.01
+        && variances.balance.unwrap_or(0.0) == 0.0;
 
-    let status = if target_entry.date == rec_entry.date
-        && amount_match
-        && target_entry.entry_type == rec_entry.entry_type
-        && balance_match
-    {
+    // Hard rule: when balance is present and materially off, never return PartialMatch.
+    let status = if exact_match {
         ReconciliationMatchStatus::Matched
-    } else {
-        let other_match_count = [date_match, amount_match, description_match]
-            .into_iter()
-            .filter(|&b| b)
-            .count();
-        if other_match_count >= 2 {
-            if evidence_score >= 4 {
-                if has_balances && !balance_exact_match {
-                    ReconciliationMatchStatus::Mismatch
-                } else {
-                    ReconciliationMatchStatus::PartialMatch
-                }
-            } else if evidence_score >= 2 {
-                ReconciliationMatchStatus::Mismatch
-            } else {
-                return None;
-            }
+    } else if variances.balance.is_some_and(|b| b > 0.0) {
+        if confidence >= 0.45 {
+            ReconciliationMatchStatus::Mismatch
         } else {
             return None;
         }
+    } else if confidence >= 0.75 {
+        ReconciliationMatchStatus::PartialMatch
+    } else if confidence >= 0.45 {
+        ReconciliationMatchStatus::Mismatch
+    } else {
+        return None;
     };
 
-    let mut score = status_base_confidence(&status);
-    let mut signals: Vec<Signal> = Vec::new();
-    let amount_exact_match = rec_entry.amount == target_entry.amount;
-    let side_match = rec_entry.entry_type == target_entry.entry_type;
-
-    if amount_exact_match {
-        score += 0.12;
-        signals.push(Signal::new(Field::Amount, 0.0));
-    } else {
-        score -= 0.15;
-        signals.push(Signal::new(Field::Amount, 1.0));
-    }
-
-    if side_match {
-        score += 0.08;
-        signals.push(Signal::new(Field::Side, 0.0));
-    } else {
-        score -= 0.1;
-        signals.push(Signal::new(Field::Side, 1.0));
-    }
-
-    if date_diff == 0 {
-        score += 0.08;
-        signals.push(Signal::new(Field::Date, 0.0));
-    } else if date_diff <= 1 {
-        score += 0.05;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    } else if date_diff <= 3 {
-        score += 0.02;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    } else if date_diff > 7 {
-        score -= 0.05;
-        signals.push(Signal::new(Field::Date, date_diff as f32));
-    }
-
-    if desc_similarity > 0.8 {
-        score += 0.09;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    } else if desc_similarity > 0.5 {
-        score += 0.04;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    } else if desc_similarity < 0.25 {
-        score -= 0.05;
-        signals.push(Signal::new(Field::Description, 1.0 - desc_similarity));
-    }
-
-    if has_balances {
-        if balance_exact_match {
-            score += 0.1;
-            signals.push(Signal::new(Field::Balance, 0.0));
-        } else {
-            score -= 0.08;
-            signals.push(Signal::new(Field::Balance, 1.0));
-        }
+    let mut signals: Vec<Signal> = vec![
+        Signal::new(Field::Amount, variances.amount),
+        Signal::new(Field::Side, variances.side),
+        Signal::new(Field::Date, variances.date_days),
+        Signal::new(Field::Description, variances.description),
+    ];
+    if let Some(balance_variance) = variances.balance {
+        signals.push(Signal::new(Field::Balance, balance_variance));
     }
 
     Some(MatchCandidate {
         status,
-        confidence: clamp_reconciliation_confidence(score),
+        confidence: clamp_reconciliation_confidence(confidence),
         signals,
     })
+}
+
+fn calculate_candidate_variances(rec_entry: &Entry, target_entry: &Entry) -> CandidateVariances {
+    let amount = relative_decimal_variance(rec_entry.amount, target_entry.amount);
+    let side = if rec_entry.entry_type == target_entry.entry_type { 0.0 } else { 1.0 };
+    let date_days = (rec_entry.date - target_entry.date).num_days().abs() as f32;
+    let date = (date_days / 14.0).min(1.0);
+    let description_similarity = reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
+    let description = (1.0 - description_similarity).clamp(0.0, 1.0);
+    let balance = match (rec_entry.balance, target_entry.balance) {
+        (Some(a), Some(b)) => Some(relative_decimal_variance(a, b)),
+        _ => None,
+    };
+
+    CandidateVariances {
+        amount,
+        side,
+        date,
+        date_days,
+        description,
+        balance,
+    }
+}
+
+fn relative_decimal_variance(a: Decimal, b: Decimal) -> f32 {
+    let delta = (a - b).abs();
+    let scale = a.abs().max(b.abs()).max(Decimal::ONE);
+    (delta / scale).to_f32().unwrap_or(1.0).min(1.0)
+}
+
+fn variance_score(variances: &CandidateVariances) -> f32 {
+    let mut weighted_sum = 0.0;
+    let mut total_weight = 0.0;
+
+    let weights = [
+        (variances.amount, 0.35),
+        (variances.side, 0.15),
+        (variances.date, 0.20),
+        (variances.description, 0.20),
+    ];
+
+    for (variance, weight) in weights {
+        weighted_sum += variance * weight;
+        total_weight += weight;
+    }
+
+    if let Some(balance_variance) = variances.balance {
+        let balance_weight = 0.10;
+        weighted_sum += balance_variance * balance_weight;
+        total_weight += balance_weight;
+    }
+
+    if total_weight == 0.0 {
+        0.0
+    } else {
+        1.0 - (weighted_sum / total_weight)
+    }
 }
 
 fn score_unmatched_reconciliation<'a, I>(rec_entry: &Entry, candidates: I) -> (f32, Vec<Signal>)
