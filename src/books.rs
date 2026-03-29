@@ -1,13 +1,15 @@
 use std::collections::HashSet;
 use std::{collections::HashMap, cmp::Ordering};
 use chrono::NaiveDate;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::books_error;
 
 use crate::account::{Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
 use crate::interest::{Interest, calculate_interest_for_accounts};
-use crate::reconcile::{ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, TargetResult};
+use crate::reconcile::{Field, ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, Signal, TargetResult};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -85,7 +87,7 @@ impl Books {
         self.flag_interest_outdated_by_account(&account);
         if ! self.accounts.contains_key(&account.id) {
             self.accounts.insert(account.id, account);
-        }        
+        }
     }
 
     pub fn update_account(&mut self, account: Account) -> Result<(), BooksError> {
@@ -131,11 +133,11 @@ impl Books {
         if self.transactions.iter().any(|t|t.involves_account(id)) {
             return Err(books_error!("errors.account_cannot_delete_with_transactions", id => id));
         }
-        
+
         if let Some(account) = self.accounts.remove(id) {
             self.flag_interest_outdated_by_account(&account);
         }
-        
+
         Ok(())
     }
 
@@ -192,8 +194,8 @@ impl Books {
                 return Err(books_error!("errors.transaction_single_entry_per_account"));
             }
         }
-        
-        // for each original transaction entry that is reconciled or outstanding find the matching transaction entry 
+
+        // for each original transaction entry that is reconciled or outstanding find the matching transaction entry
         // if the transaction entry is not the same return error
         if let Some(orginal_transaction) = self.transactions.iter().find(|t| t.id == transaction.id) {
             for original_entry in orginal_transaction.entries.iter() {
@@ -209,16 +211,16 @@ impl Books {
         // If the transaction is net new,
         // or the original_transaction has entries that are not flaged as reconciled or outstanding,
         // check that their dates are after their account's reconciliation date
-        
+
         let original_transaction = self.transactions.iter().find(|t| t.id == transaction.id);
 
         for entry in &transaction.entries {
             // Check if this entry exists in original transaction as reconciled or outstanding
-            
+
             if original_transaction.is_none_or(
                 |original_transaction| original_transaction.entries.iter()
-                    .any(|e| e.account_id == entry.account_id && ! e.is_reconciled_or_outstanding())) { 
-                
+                    .any(|e| e.account_id == entry.account_id && ! e.is_reconciled_or_outstanding())) {
+
                 // Check if account exists and has reconciliation info
                 if let Some(account) = self.accounts.get(&entry.account_id) {
                     if let Some(reconciliation_info) = &account.reconciliation_info {
@@ -229,7 +231,7 @@ impl Books {
                 }
             }
         }
-            
+
         Ok(())
     }
 
@@ -240,7 +242,7 @@ impl Books {
         if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
             self.flag_interest_outdated(&transaction);
             let old = std::mem::replace(&mut self.transactions[index], transaction);
-            self.flag_interest_outdated(&old);            
+            self.flag_interest_outdated(&old);
             Ok(())
         } else {
             Err(books_error!("errors.transaction_not_found", id => transaction.id))
@@ -251,11 +253,11 @@ impl Books {
     fn reconcile_transaction(&mut self, mut transaction: Transaction, account_id: Uuid, status: ReconciledStatus) -> Result<(), BooksError> {
 
         self.validate_transaction(&transaction)?;
-        
+
         let transaction_id = transaction.id;
 
         if let Some(entry) = transaction.entries.iter_mut().find(|e| e.account_id == account_id) {
-            if entry.reconciled_status.is_none_or(|rs|rs != status) { 
+            if entry.reconciled_status.is_none_or(|rs|rs != status) {
                 entry.reconciled_status = Some(status);
                 transaction.status = TransactionStatus::Recorded;
                 if let Some(index) = self.transactions.iter().position(|t| t.id == transaction_id) {
@@ -276,7 +278,7 @@ impl Books {
                 return Err(books_error!("errors.cannot_delete_reconciled_transaction"));
             }
             let transaction = self.transactions.remove(index);
-            self.flag_interest_outdated(&transaction);            
+            self.flag_interest_outdated(&transaction);
             Ok(())
         } else {
             return Err(books_error!("errors.transaction_not_found", id => id));
@@ -314,7 +316,7 @@ impl Books {
 
     fn flag_interest_outdated_by_account(&mut self, account: &Account) -> bool {
         if self.interest_outdated() { return true }
-        
+
         if account.interest_id.is_some() {
             self.recalculate_interest.insert(account.id);
             return true;
@@ -373,11 +375,11 @@ impl Books {
                 .enumerate()
                 .map(|(idx, t)| (idx, t.clone()))
                 .collect();
-        
+
         let mut account_transactions: Vec<Transaction> =
             account_transactions.into_iter().map(|(_, t)| t).collect();
 
-        sort_transactions_by_account(&mut account_transactions, Some(account_id), TransactionSortOrder::OldestFirst);        
+        sort_transactions_by_account(&mut account_transactions, Some(account_id), TransactionSortOrder::OldestFirst);
         let account = self.accounts.get(&account_id).unwrap();
         let mut balance = account.starting_balance;
 
@@ -523,7 +525,7 @@ impl Books {
             Ok(())
         } else {
             return Err(books_error!("errors.account_not_found", id => interest.account_id));
-        }        
+        }
 
     }
 
@@ -534,12 +536,12 @@ impl Books {
     }
 
     pub fn update_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
-        self.validate_interest(&interest)?;        
+        self.validate_interest(&interest)?;
         self.check_recalculate_interest(&interest);
 
         let account = self.accounts.get(&interest.account_id)
             .ok_or(books_error!("errors.account_not_found", id => interest.account_id))?;
-        
+
         if let Some(interest_id) = account.interest_id {
             let old = self.interests.insert(interest_id, interest);
             if let Some(old_interest) = old {
@@ -548,7 +550,7 @@ impl Books {
         } else {
             self.add_interest(interest)?;
         }
-        
+
         Ok(())
     }
 
@@ -570,9 +572,9 @@ impl Books {
     fn validate_interest(&mut self, interest: &Interest) -> Result<(), BooksError> {
 
         self.valid_account_id(interest.account_id)?;
-        
+
         for t in interest.terms.as_slice() {
-            
+
             if let Some(interest_account_id) = t.interest_account_id {
                 self.valid_account_id(interest_account_id)?;
                 let account = self.get_account(&interest_account_id)?;
@@ -580,7 +582,7 @@ impl Books {
                     return Err(books_error!("errors.invalid_account_type", name => account.name))
                 }
             }
-        
+
             if let Some(income_account_id) = t.income_account_id {
                 self.valid_account_id(income_account_id)?;
                 let account = self.get_account(&income_account_id)?;
@@ -589,7 +591,7 @@ impl Books {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -599,12 +601,12 @@ impl Books {
             .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
             .map(|t| t.clone())
             .collect();
-        
+
         // Sort transactions by date to find the latest one
         sort_transactions_by_account(&mut transactions, None, TransactionSortOrder::OldestFirst);
-        
+
         let new_last = transactions.last().and_then(|t| t.date());
-       
+
         let existing_schedule = self.scheduler.get_schedule(schedule_id)?;
         self.scheduler.update_schedule(Schedule {
             id: schedule_id,
@@ -614,7 +616,7 @@ impl Books {
         Ok(new_last)
     }
 
-    /// Reconcile a list of transactions against the books for a given account.    
+    /// Reconcile a list of transactions against the books for a given account.
     pub fn prepare_reconciliation(
         &self,
         account_id: Uuid,
@@ -629,7 +631,12 @@ impl Books {
 
         // 2) Load existing account transactions (with balances) and track matched indices.
         let existing_txns = self.account_transactions(account_id)?;
-        let mut matched_indices: Vec<usize> = Vec::new();
+        let existing_targets: Vec<(usize, Uuid, Entry)> = existing_txns
+            .iter()
+            .enumerate()
+            .filter_map(|(i, txn)| txn.find_entry_by_account(&account_id).map(|target| (i, txn.id, target.clone())))
+            .collect();
+        let mut matched_indices: HashSet<usize> = HashSet::new();
 
         let mut results: Vec<ReconciliationItem> = Vec::with_capacity(input_txns.len() + existing_txns.len());
 
@@ -638,66 +645,54 @@ impl Books {
             let entry = input
                 .find_entry_by_account(&account_id)
                 .expect("transaction involves account");
-
-            let amount = entry.amount;
-            let entry_type = entry.entry_type;
-            let date = entry.date;
-            let description = &entry.description;
             let expected_balance = entry.balance;
 
-            // 4) Try exact match first; if none, try partial/mismatch rules.
-            let (status, matched_id) = existing_txns
-                .iter()
-                .enumerate()
-                .find(|(i, existing)| {
-                    !matched_indices.contains(i)
-                        && existing
-                            .find_entry_by_account(&account_id)
-                            .map(|e| {
-                                (e.date - date).num_days().abs() <= 14
-                                    && e.date == date
-                                    && e.amount == amount
-                                    && e.entry_type == entry_type
-                                    && e.balance == expected_balance
-                            })
-                            .unwrap_or(false)
-                })
-                .map(|(i, existing)| {
-                    matched_indices.push(i);
-                    (ReconciliationMatchStatus::Matched, Some(existing.id))
-                })
-                .or_else(|| {
-                    existing_txns.iter().enumerate().find_map(|(i, existing)| {
-                        if matched_indices.contains(&i) {
-                            return None;
+            // 4) Score candidate matches inline and choose the highest-confidence eligible target.
+            let mut best_candidate: Option<(usize, Uuid, MatchCandidate)> = None;
+            for (target_idx, target_txn_id, target_entry) in existing_targets.iter() {
+                if matched_indices.contains(target_idx) {
+                    continue;
+                }
+
+                if let Some(candidate) = evaluate_match_candidate(entry, target_entry) {
+                    match &best_candidate {
+                        None => {
+                            best_candidate = Some((*target_idx, *target_txn_id, candidate));
                         }
-                        existing.find_entry_by_account(&account_id).and_then(|e| {
-                            let within_14_days = (e.date - date).num_days().abs() <= 14;
-                            if !within_14_days {
-                                return None;
+                        Some((_, _, best_candidate_match)) => {
+                            let better_status = status_rank(&candidate.status) > status_rank(&best_candidate_match.status);
+                            let same_status = status_rank(&candidate.status) == status_rank(&best_candidate_match.status);
+                            if candidate.confidence > best_candidate_match.confidence
+                                || (candidate.confidence == best_candidate_match.confidence && better_status)
+                                || (candidate.confidence == best_candidate_match.confidence
+                                    && same_status
+                                    && candidate.status == ReconciliationMatchStatus::Matched)
+                            {
+                                best_candidate = Some((*target_idx, *target_txn_id, candidate));
                             }
-                            let date_match = (e.date - date).num_days().abs() <= 1;
-                            let amount_match = e.amount == amount;
-                            let description_match = e.description == *description;
-                            let balance_match = e.balance == expected_balance;
-                            let other_match_count = [date_match, amount_match, description_match]
-                                .into_iter()
-                                .filter(|&b| b)
-                                .count();
-                            if other_match_count >= 2 {
-                                matched_indices.push(i);
-                                if balance_match {
-                                    Some((ReconciliationMatchStatus::PartialMatch, Some(existing.id)))
-                                } else {
-                                    Some((ReconciliationMatchStatus::Mismatch, Some(existing.id)))
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                })
-                .unwrap_or((ReconciliationMatchStatus::Unmatched, None));
+                        }
+                    }
+                }
+            }
+
+            let (status, matched_id, confidence, signals) = if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
+                matched_indices.insert(match_idx);
+                (
+                    candidate.status,
+                    Some(matched_txn_id),
+                    candidate.confidence,
+                    candidate.signals,
+                )
+            } else {
+                let (confidence, signals) = score_unmatched_reconciliation(
+                    entry,
+                    existing_targets
+                        .iter()
+                        .filter(|(idx, _, _)| !matched_indices.contains(idx))
+                        .map(|(_, _, candidate)| candidate),
+                );
+                (ReconciliationMatchStatus::Unmatched, None, confidence, signals)
+            };
 
             // 5) Record this input transaction's reconciliation outcome.
             results.push(ReconciliationItem::Reconciliation(ReconciliationResult {
@@ -705,13 +700,15 @@ impl Books {
                 status,
                 balance: expected_balance,
                 matched_transaction_id: matched_id,
+                confidence,
+                signals,
             }));
         }
 
         // 6) Add existing transactions to results, splicing matched reconciliation transactions immediately after their targets
         let mut final_results: Vec<ReconciliationItem> = Vec::with_capacity(existing_txns.len() + results.len());
         let mut reconciliation_lookup: std::collections::HashMap<Uuid, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
-        
+
         // Group reconciliation transactions by their matched target ID
         for reconciliation_item in &results {
             if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
@@ -720,12 +717,12 @@ impl Books {
                 }
             }
         }
-        
+
         // Add existing transactions with their matched reconciliation transactions
         for existing_txn in existing_txns.iter() {
             // Check if this existing transaction has any matches
             let matched_reconciliations = reconciliation_lookup.get(&existing_txn.id);
-            
+
             // Determine the status based on matches
             let status = if let Some(matches) = matched_reconciliations {
                 if matches.len() > 1 {
@@ -739,14 +736,14 @@ impl Books {
             } else {
                 ReconciliationMatchStatus::Unmatched
             };
-            
+
             // Add the original existing transaction with updated status
             let mut original_item = ReconciliationItem::Original(TargetResult {
                 transaction: existing_txn.clone(),
                 status,
                 matched_reconciliation_id: None,
             });
-            
+
             // If there are matches, set the matched_reconciliation_id to the first match's transaction ID
             if let Some(matches) = matched_reconciliations {
                 if !matches.is_empty() {
@@ -759,9 +756,9 @@ impl Books {
                     }
                 }
             }
-            
+
             final_results.push(original_item);
-            
+
             // Add any reconciliation transactions that matched this existing transaction
             if let Some(matched_reconciliations) = matched_reconciliations {
                 for reconciliation_item in matched_reconciliations {
@@ -769,11 +766,11 @@ impl Books {
                 }
             }
         }
-        
+
         // Add unmatched reconciliation transactions, inserting them by date
         // Group unmatched transactions by date for efficient insertion
         let mut unmatched_by_date: std::collections::HashMap<chrono::NaiveDate, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
-        
+
         for reconciliation_item in &results {
             if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
                 if recon_result.matched_transaction_id.is_none() {
@@ -783,12 +780,12 @@ impl Books {
                 }
             }
         }
-        
+
         // Insert unmatched transactions by date
         for (date, unmatched_items) in unmatched_by_date {
             // Find the position where this date should be inserted (as last item of this date)
             let mut insert_position = final_results.len(); // Default to end if no suitable position found
-            
+
             for (i, result_item) in final_results.iter().enumerate() {
                 let item_date = match result_item {
                     ReconciliationItem::Reconciliation(recon) => {
@@ -800,7 +797,7 @@ impl Books {
                             .expect("target transaction involves account").date
                     }
                 };
-                
+
                 if item_date > date {
                     insert_position = i;
                     break;
@@ -809,7 +806,7 @@ impl Books {
                     insert_position = i + 1;
                 }
             }
-            
+
             // Insert all unmatched transactions for this date at the calculated position
             for (offset, unmatched_item) in unmatched_items.iter().enumerate() {
                 final_results.insert(insert_position + offset, (*unmatched_item).clone());
@@ -829,6 +826,13 @@ impl Books {
                 ReconciliationMatchStatus::Matched | ReconciliationMatchStatus::PartialMatch => {
                     for idx in mismatched_indices.drain(..) {
                         final_results[idx].set_status(ReconciliationMatchStatus::PartialMatch);
+                        if let ReconciliationItem::Reconciliation(recon) = &mut final_results[idx] {
+                            recon.confidence = adjust_confidence_for_status(
+                                recon.confidence,
+                                ReconciliationMatchStatus::Mismatch,
+                                ReconciliationMatchStatus::PartialMatch,
+                            );
+                        }
                     }
                 }
             }
@@ -837,7 +841,7 @@ impl Books {
         Ok(final_results)
     }
 
-    
+
     pub fn reconcile_account_transactions(&mut self, account_id: Uuid, transaction_ids: Vec<Uuid>) -> Result<(), BooksError> {
         println!("Reconciling account transactions for account {} transactions: {:?}", account_id, transaction_ids);
         if !self.accounts.contains_key(&account_id) {
@@ -846,23 +850,23 @@ impl Books {
 
         let mut account_transactions = self.account_transactions(account_id)?;
         let mut new_recon_transaction: Option<Transaction> = None;
-        // set the last index to the account reconciliation_info transaction_id index   
+        // set the last index to the account reconciliation_info transaction_id index
         let mut last_index: Option<usize> = self.accounts.get(&account_id).unwrap().reconciliation_info.as_ref().map(|info| info.transaction_id).map(|id| account_transactions.iter().position(|t| t.id == id).unwrap());
         let mut first_index: Option<usize> = None;
-        
+
         // Reconcile each transaction.
         for transaction_id in transaction_ids {
 
             let idx = account_transactions.iter().position(|t| t.id == transaction_id).ok_or_else(|| {
                 books_error!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id)
             })?;
-            
+
             let transaction = account_transactions.iter_mut().find(|t| t.id == transaction_id).ok_or_else(|| {
                 books_error!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id)
             })?;
-            
+
             self.reconcile_transaction(transaction.clone(), account_id, ReconciledStatus::Reconciled)?;
-            
+
             if last_index.is_none_or(|li|li < idx) {
                 last_index = Some(idx);
                 new_recon_transaction = Some(transaction.clone())
@@ -872,14 +876,14 @@ impl Books {
                 first_index = Some(idx);
             }
         }
-        
+
         // Flag any now outstanding transactions before the first transaction.
         if let Some(first_index) = first_index {
             for earlier_transaction in account_transactions.iter_mut().take(first_index)
                     .filter(|t|t.find_entry_by_account(&account_id)
-                    .is_some_and(|e|e.reconciled_status.is_none())) {                    
+                    .is_some_and(|e|e.reconciled_status.is_none())) {
                 self.reconcile_transaction(earlier_transaction.clone(), account_id, ReconciledStatus::Outstanding)?;
-            }    
+            }
         }
 
         // Set the reconciliation info for the account.
@@ -891,7 +895,7 @@ impl Books {
                     balance: last_entry.balance.unwrap(),
                     transaction_id: t.id,
                 });
-            }      
+            }
         }
 
         Ok(())
@@ -946,8 +950,8 @@ impl Books {
     }
 
     fn valid_account_id(&self, id: Uuid) -> Result<(), BooksError> {
-        if self.accounts.contains_key(&id) { 
-            Ok(()) 
+        if self.accounts.contains_key(&id) {
+            Ok(())
         } else {
             Err(books_error!("errors.account_not_found", id => id))
         }
@@ -981,7 +985,261 @@ impl Books {
         println!("Checks completed ✅");
         Ok(())
     }
-    
+
+}
+
+struct MatchCandidate {
+    status: ReconciliationMatchStatus,
+    confidence: f32,
+    signals: Vec<Signal>,
+}
+
+struct CandidateVariances {
+    amount: f32,
+    side: f32,
+    date: f32,
+    date_days: f32,
+    description: f32,
+    balance: Option<f32>,
+}
+
+fn evaluate_match_candidate(
+    rec_entry: &Entry,
+    target_entry: &Entry,
+) -> Option<MatchCandidate> {
+    let within_14_days = (target_entry.date - rec_entry.date).num_days().abs() <= 14;
+    if !within_14_days {
+        return None;
+    }
+
+    let variances = calculate_candidate_variances(rec_entry, target_entry);
+    let confidence = variance_score(&variances);
+    let strong_anchor_count = [
+        variances.amount <= 0.10,
+        variances.date <= 0.15,
+        variances.description <= 0.35,
+    ]
+    .into_iter()
+    .filter(|is_anchor| *is_anchor)
+    .count();
+
+    // Guard against opportunistic weak matches that can steal a better target.
+    if strong_anchor_count < 2 {
+        return None;
+    }
+
+    let exact_match = variances.amount == 0.0
+        && variances.side == 0.0
+        && variances.date_days == 0.0
+        //&& variances.description <= 0.01
+        && variances.balance.unwrap_or(0.0) == 0.0;
+
+    // Hard rule: when balance is present and materially off, never return PartialMatch.
+    let status = if exact_match {
+        ReconciliationMatchStatus::Matched
+    } else if variances.balance.is_some_and(|b| b > 0.0) {
+        if confidence >= 0.45 {
+            ReconciliationMatchStatus::Mismatch
+        } else {
+            return None;
+        }
+    } else if confidence >= 0.75 {
+        ReconciliationMatchStatus::PartialMatch
+    } else if confidence >= 0.45 {
+        ReconciliationMatchStatus::Mismatch
+    } else {
+        return None;
+    };
+
+    let mut signals: Vec<Signal> = vec![
+        Signal::new(Field::Amount, variances.amount),
+        Signal::new(Field::Side, variances.side),
+        Signal::new(Field::Date, variances.date_days),
+        Signal::new(Field::Description, variances.description),
+    ];
+    if let Some(balance_variance) = variances.balance {
+        signals.push(Signal::new(Field::Balance, balance_variance));
+    }
+
+    Some(MatchCandidate {
+        status,
+        confidence: clamp_reconciliation_confidence(confidence),
+        signals,
+    })
+}
+
+fn calculate_candidate_variances(rec_entry: &Entry, target_entry: &Entry) -> CandidateVariances {
+    let amount = relative_decimal_variance(rec_entry.amount, target_entry.amount);
+    let side = if rec_entry.entry_type == target_entry.entry_type { 0.0 } else { 1.0 };
+    let date_days = (rec_entry.date - target_entry.date).num_days().abs() as f32;
+    let date = (date_days / 14.0).min(1.0);
+    let description_similarity = reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
+    let description = (1.0 - description_similarity).clamp(0.0, 1.0);
+    let balance = match (rec_entry.balance, target_entry.balance) {
+        (Some(a), Some(b)) => Some(relative_decimal_variance(a, b)),
+        _ => None,
+    };
+
+    CandidateVariances {
+        amount,
+        side,
+        date,
+        date_days,
+        description,
+        balance,
+    }
+}
+
+fn relative_decimal_variance(a: Decimal, b: Decimal) -> f32 {
+    let delta = (a - b).abs();
+    let scale = a.abs().max(b.abs()).max(Decimal::ONE);
+    (delta / scale).to_f32().unwrap_or(1.0).min(1.0)
+}
+
+fn variance_score(variances: &CandidateVariances) -> f32 {
+    let mut weighted_sum = 0.0;
+    let mut total_weight = 0.0;
+
+    let weights = [
+        (variances.amount, 0.35),
+        (variances.side, 0.15),
+        (variances.date, 0.20),
+        (variances.description, 0.20),
+    ];
+
+    for (variance, weight) in weights {
+        weighted_sum += variance * weight;
+        total_weight += weight;
+    }
+
+    if let Some(balance_variance) = variances.balance {
+        let balance_weight = 0.10;
+        weighted_sum += balance_variance * balance_weight;
+        total_weight += balance_weight;
+    }
+
+    if total_weight == 0.0 {
+        0.0
+    } else {
+        1.0 - (weighted_sum / total_weight)
+    }
+}
+
+fn score_unmatched_reconciliation<'a, I>(rec_entry: &Entry, candidates: I) -> (f32, Vec<Signal>)
+where
+    I: Iterator<Item = &'a Entry>,
+{
+    let mut signals: Vec<Signal> = vec![Signal::new(Field::Linkage, -1.0)];
+    signals.push(build_unmatched_signal(rec_entry, candidates));
+    (clamp_reconciliation_confidence(status_base_confidence(&ReconciliationMatchStatus::Unmatched)), signals)
+}
+
+fn build_unmatched_signal<'a, I>(rec_entry: &Entry, candidates: I) -> Signal
+where
+    I: Iterator<Item = &'a Entry>,
+{
+    let mut best_candidate: Option<(i32, i64)> = None;
+
+    for target in candidates {
+        let date_diff = (rec_entry.date - target.date).num_days().abs();
+        let desc_similarity = reconciliation_description_similarity(&rec_entry.description, &target.description);
+        let mut candidate_score = 0_i32;
+
+        if rec_entry.amount == target.amount {
+            candidate_score += 4;
+        }
+        if rec_entry.entry_type == target.entry_type {
+            candidate_score += 2;
+        }
+        if date_diff == 0 {
+            candidate_score += 3;
+        } else if date_diff <= 1 {
+            candidate_score += 2;
+        } else if date_diff <= 3 {
+            candidate_score += 1;
+        }
+        if desc_similarity > 0.8 {
+            candidate_score += 2;
+        } else if desc_similarity > 0.5 {
+            candidate_score += 1;
+        }
+
+        match best_candidate {
+            None => best_candidate = Some((candidate_score, date_diff)),
+            Some((best_score, best_diff)) => {
+                if candidate_score > best_score || (candidate_score == best_score && date_diff < best_diff) {
+                    best_candidate = Some((candidate_score, date_diff));
+                }
+            }
+        }
+    }
+
+    if let Some((score, date_diff)) = best_candidate {
+        if score >= 4 {
+            return Signal::new(Field::Candidate, date_diff as f32);
+        }
+    }
+
+    Signal::new(Field::Candidate, -1.0)
+}
+
+fn reconciliation_description_similarity(a: &str, b: &str) -> f32 {
+    let a_tokens = tokenize_reconciliation_description(a);
+    let b_tokens = tokenize_reconciliation_description(b);
+    if a_tokens.is_empty() && b_tokens.is_empty() {
+        return 1.0;
+    }
+    if a_tokens.is_empty() || b_tokens.is_empty() {
+        return 0.0;
+    }
+
+    let intersection = a_tokens.intersection(&b_tokens).count() as f32;
+    let union = a_tokens.union(&b_tokens).count() as f32;
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn tokenize_reconciliation_description(description: &str) -> HashSet<String> {
+    description
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_string())
+        .collect()
+}
+
+fn clamp_reconciliation_confidence(value: f32) -> f32 {
+    value.max(0.0).min(0.99)
+}
+
+fn status_base_confidence(status: &ReconciliationMatchStatus) -> f32 {
+    match status {
+        ReconciliationMatchStatus::Matched => 0.78,
+        ReconciliationMatchStatus::PartialMatch => 0.55,
+        ReconciliationMatchStatus::Mismatch => 0.32,
+        ReconciliationMatchStatus::Unmatched => 0.08,
+    }
+}
+
+fn adjust_confidence_for_status(
+    current_confidence: f32,
+    old_status: ReconciliationMatchStatus,
+    new_status: ReconciliationMatchStatus,
+) -> f32 {
+    let delta = status_base_confidence(&new_status) - status_base_confidence(&old_status);
+    clamp_reconciliation_confidence(current_confidence + delta)
+}
+
+fn status_rank(status: &ReconciliationMatchStatus) -> u8 {
+    match status {
+        ReconciliationMatchStatus::Matched => 3,
+        ReconciliationMatchStatus::PartialMatch => 2,
+        ReconciliationMatchStatus::Mismatch => 1,
+        ReconciliationMatchStatus::Unmatched => 0,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
