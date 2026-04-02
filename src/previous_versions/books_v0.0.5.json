@@ -1,7 +1,7 @@
 {
     "id": "d8c4f6e8-1488-4e85-a0ab-f4c599373239",
-    "name": "My Books v0.0.4[",
-    "version": "0.0.4",
+    "name": "My Books v0.0.5",
+    "version": "0.0.5",
     "accounts": {
         "874bda0f-aafe-426b-b7ca-253e0e9aba5e": {
             "id": "874bda0f-aafe-426b-b7ca-253e0e9aba5e",
@@ -43,11 +43,30 @@
                         "entry_type": "Credit",
                         "amount": "200"
                     }
+                ],
+                "schedule_modifiers": [
+                    {
+                        "modifier_id": "f56d165b-7fc7-47a9-a439-c2b5aa1c4d24",
+                        "last_date": "2022-06-04",
+                        "cycle_count": 0
+                    }
                 ]
             }
         ],
-        "end_date": "null"        
-    },
+        "end_date": "null",
+        "modifiers": {
+            "f56d165b-7fc7-47a9-a439-c2b5aa1c4d24": {
+                "id": "f56d165b-7fc7-47a9-a439-c2b5aa1c4d24",
+                "name": "Test modifier",
+                "period": "Months",
+                "frequency": 1,
+                "start_date": "2022-06-04",
+                "end_date": "null",
+                "amount": "0",
+                "percentage": "0.1"
+            }
+        }
+    },    
     "transactions": [
         {
             "id": "98938e72-2702-4cd3-84b5-bab823572215",
@@ -104,7 +123,6 @@
             "schedule_id": null
         }
     ],
-    "modifiers": [],
     "settings": {
         "require_double_entry": false
     }

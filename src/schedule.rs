@@ -25,7 +25,7 @@ pub struct ScheduleEntry {
     pub amount: Decimal,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Copy)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Copy, Debug)]
 pub enum ScheduleEnum {
     Days,
     Weeks,
@@ -91,10 +91,6 @@ pub fn calculate_next_date(
             result = new_date.checked_add_signed(Duration::days(1));
         }
     }
-    println!(
-        "prev_date: {:?}, new_date: {:?}, start_date: {:?}",
-        prev_date, new_date, start_date
-    );
     new_date
 }
 

@@ -1,7 +1,8 @@
 use chrono::NaiveDate;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
-use crate::account::{Entry, TransactionStatus};
+use crate::books_error;
+use crate::account::{Entry, Source, TransactionStatus};
 use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
 
@@ -41,7 +42,7 @@ impl Scheduler {
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
             Ok(&self.schedules[index])
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(books_error!("errors.schedule_not_found", id => schedule_id))
         }
 
     }
@@ -52,7 +53,7 @@ impl Scheduler {
             let _old = std::mem::replace(&mut self.schedules[index], schedule);
             Ok(())
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(books_error!("errors.schedule_not_found", id => schedule.id))
         }
 
     }
@@ -62,7 +63,7 @@ impl Scheduler {
             self.schedules.remove(index);
             Ok(())
         } else {
-            Err(BooksError { error: "Schedule not found".to_string() })
+            Err(books_error!("errors.schedule_not_found", id => id))
         }
     }
 
@@ -78,15 +79,16 @@ impl Scheduler {
         if let Some(modifier) = self.modifiers.get(&modifier_id) {
             Ok(modifier)
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(books_error!("errors.modifier_not_found", id => modifier_id))
         }
     }
 
     pub fn update_modifier(&mut self, modifier: Modifier) -> Result<(), BooksError> {
-        if self.modifiers.insert(modifier.id, modifier).is_some() {
+        let modifier_id = modifier.id;
+        if self.modifiers.insert(modifier_id, modifier).is_some() {
             Ok(())
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(books_error!("errors.modifier_not_found", id => modifier_id))
         }        
     }
 
@@ -94,7 +96,7 @@ impl Scheduler {
         if self.modifiers.remove(id).is_some() {
             Ok(())
         } else {
-            Err(BooksError { error: "Modifier not found".to_string() })
+            Err(books_error!("errors.modifier_not_found", id => id))
         }
     }
 
@@ -159,7 +161,8 @@ impl Scheduler {
                         id: transaction_id,
                         entries: entries,
                         status: TransactionStatus::Projected,
-                        schedule_id: Some(schedule.id),
+                        source_type: Some(Source::Schedule),
+                        source_id: Some(schedule.id),
                     };
 
                     schedule.last_date = Some(next_date);
