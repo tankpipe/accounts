@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{serializer::*};
+use crate::serializer::*;
 use serde::Deserialize;
 
 /// Account models.
@@ -40,8 +40,8 @@ pub enum Source {
 pub struct Transaction {
     pub id: Uuid,
     pub entries: Vec<Entry>,
-    pub status: TransactionStatus,    
-    pub source_type: Option<Source>,    
+    pub status: TransactionStatus,
+    pub source_type: Option<Source>,
     pub source_id: Option<Uuid>,
 }
 
@@ -83,14 +83,18 @@ impl Transaction {
     pub fn reconcile(&mut self, account_id: Uuid) {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id) {
             entry.reconciled_status = Some(ReconciledStatus::Reconciled);
-        }   
+        }
     }
 
     pub fn reconcile_outstanding(&mut self, account_id: Uuid) -> bool {
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.account_id == account_id && e.reconciled_status.is_none()) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.account_id == account_id && e.reconciled_status.is_none())
+        {
             entry.reconciled_status = Some(ReconciledStatus::Outstanding);
-            return true
-        } 
+            return true;
+        }
         false
     }
 
@@ -103,7 +107,6 @@ impl Transaction {
         self.source_type = Some(Source::Interest);
         self.source_id = Some(interest_id);
     }
-
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -111,8 +114,6 @@ pub enum ReconciledStatus {
     Reconciled,
     Outstanding,
 }
-
-
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Entry {
@@ -151,11 +152,14 @@ impl Entry {
     }
 
     pub fn is_reconciled(&self) -> bool {
-        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Reconciled)
+        self.reconciled_status
+            .is_some_and(|s| s == ReconciledStatus::Reconciled)
     }
 
     pub fn is_reconciled_or_outstanding(&self) -> bool {
-        self.reconciled_status.is_some_and(|s| s == ReconciledStatus::Outstanding || s == ReconciledStatus::Reconciled)
+        self.reconciled_status.is_some_and(|s| {
+            s == ReconciledStatus::Outstanding || s == ReconciledStatus::Reconciled
+        })
     }
 }
 
@@ -197,7 +201,7 @@ impl AccountType {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ReconciliationInfo {    
+pub struct ReconciliationInfo {
     #[serde(serialize_with = "serialize_naivedate")]
     #[serde(deserialize_with = "deserialize_naivedate")]
     pub date: NaiveDate,
@@ -212,7 +216,7 @@ pub struct Account {
     pub account_type: AccountType,
     pub balance: Decimal,
     pub starting_balance: Decimal,
-    pub reconciliation_info: Option<ReconciliationInfo>,    
+    pub reconciliation_info: Option<ReconciliationInfo>,
     pub interest_id: Option<Uuid>,
 }
 
@@ -224,7 +228,7 @@ impl Account {
             account_type,
             balance: dec!(0),
             starting_balance: dec!(0),
-            reconciliation_info: None,  
+            reconciliation_info: None,
             interest_id: None,
         };
     }
@@ -233,7 +237,6 @@ impl Account {
         self.account_type.normal_balance()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

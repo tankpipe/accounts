@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use crate::account::{Side, Transaction};
 
-
 /// Result of matching a transaction during reconciliation.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum ReconciliationMatchStatus {
@@ -28,7 +27,6 @@ pub enum Field {
     Linkage,
     Candidate,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -113,14 +111,23 @@ pub struct TargetResult {
 }
 
 pub fn score_reconciliation_items(account_id: Uuid, items: &mut [ReconciliationItem]) {
-    let mut target_lookup: HashMap<Uuid, (chrono::NaiveDate, String, Decimal, Side, Option<Decimal>)> = HashMap::new();
+    let mut target_lookup: HashMap<
+        Uuid,
+        (chrono::NaiveDate, String, Decimal, Side, Option<Decimal>),
+    > = HashMap::new();
 
     for item in items.iter() {
         if let ReconciliationItem::Original(original) = item {
             if let Some(entry) = original.transaction.find_entry_by_account(&account_id) {
                 target_lookup.insert(
                     original.transaction.id,
-                    (entry.date, entry.description.clone(), entry.amount, entry.entry_type, entry.balance),
+                    (
+                        entry.date,
+                        entry.description.clone(),
+                        entry.amount,
+                        entry.entry_type,
+                        entry.balance,
+                    ),
                 );
             }
         }
@@ -154,13 +161,18 @@ fn score_item(
         return (confidence, signals);
     };
 
-    let Some((target_date, target_description, target_amount, target_side, target_balance)) = target_lookup.get(&target_id) else {
+    let Some((target_date, target_description, target_amount, target_side, target_balance)) =
+        target_lookup.get(&target_id)
+    else {
         signals.push(Signal::new(Field::Linkage, -0.9));
         let confidence = clamp_confidence(score);
         return (confidence, signals);
     };
 
-    let Some(rec_entry) = reconciliation.transaction.find_entry_by_account(&account_id) else {
+    let Some(rec_entry) = reconciliation
+        .transaction
+        .find_entry_by_account(&account_id)
+    else {
         signals.push(Signal::new(Field::Linkage, -0.8));
         let confidence = clamp_confidence(score - 0.1);
         return (confidence, signals);
@@ -203,7 +215,11 @@ fn score_item(
 }
 
 fn bool_to_deviation(value: bool) -> f32 {
-    if value { 1.0 } else { 0.0 }
+    if value {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 fn description_similarity(a: &str, b: &str) -> f32 {

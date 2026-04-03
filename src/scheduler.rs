@@ -1,12 +1,12 @@
-use chrono::NaiveDate;
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use crate::books_error;
 use crate::account::{Entry, Source, TransactionStatus};
+use crate::books_error;
 use crate::schedule::{Modifier, Schedule};
 use crate::serializer::*;
+use chrono::NaiveDate;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::{account::{Transaction}, books::BooksError};
+use crate::{account::Transaction, books::BooksError};
 
 ///
 
@@ -20,13 +20,24 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-
     pub fn build_empty() -> Scheduler {
-        Scheduler{schedules: Vec::new(), end_date: None, modifiers: std::collections::HashMap::new()}
+        Scheduler {
+            schedules: Vec::new(),
+            end_date: None,
+            modifiers: std::collections::HashMap::new(),
+        }
     }
 
-    pub fn with_components(schedules: Vec<Schedule>, end_date: Option<NaiveDate>, modifiers: Vec<Modifier>) -> Scheduler {
-        let mut s =Scheduler { schedules, end_date, modifiers: std::collections::HashMap::new() };
+    pub fn with_components(
+        schedules: Vec<Schedule>,
+        end_date: Option<NaiveDate>,
+        modifiers: Vec<Modifier>,
+    ) -> Scheduler {
+        let mut s = Scheduler {
+            schedules,
+            end_date,
+            modifiers: std::collections::HashMap::new(),
+        };
         for modifier in modifiers {
             s.modifiers.insert(modifier.id, modifier);
         }
@@ -38,24 +49,20 @@ impl Scheduler {
     }
 
     pub fn get_schedule(&self, schedule_id: Uuid) -> Result<&Schedule, BooksError> {
-
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
             Ok(&self.schedules[index])
         } else {
             Err(books_error!("errors.schedule_not_found", id => schedule_id))
         }
-
     }
 
     pub fn update_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
-
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule.id) {
             let _old = std::mem::replace(&mut self.schedules[index], schedule);
             Ok(())
         } else {
             Err(books_error!("errors.schedule_not_found", id => schedule.id))
         }
-
     }
 
     pub fn delete_schedule(&mut self, id: &Uuid) -> Result<(), BooksError> {
@@ -89,7 +96,7 @@ impl Scheduler {
             Ok(())
         } else {
             Err(books_error!("errors.modifier_not_found", id => modifier_id))
-        }        
+        }
     }
 
     pub fn delete_modifier(&mut self, id: &Uuid) -> Result<(), BooksError> {
@@ -108,30 +115,36 @@ impl Scheduler {
         self.end_date.and_then(|d| Some(d.clone()))
     }
 
-    fn generate_transactions_for_schedules(&mut self, schedule_indices: &[usize], schedule_to: NaiveDate) -> Vec<Transaction> {
-        let mut transactions : Vec<Transaction> = Vec::new();
+    fn generate_transactions_for_schedules(
+        &mut self,
+        schedule_indices: &[usize],
+        schedule_to: NaiveDate,
+    ) -> Vec<Transaction> {
+        let mut transactions: Vec<Transaction> = Vec::new();
 
         for &index in schedule_indices {
             let schedule = &mut self.schedules[index];
-            
+
             loop {
                 let next_date = schedule.get_next_date();
-                
+
                 // Check if we need to increment any modifiers based on next_date.
                 for schedule_modifier in &mut schedule.schedule_modifiers {
                     if let Some(modifier) = self.modifiers.get(&schedule_modifier.modifier_id) {
                         let next_modifier_date = schedule_modifier.get_next_date(modifier);
-                        
+
                         if next_date >= next_modifier_date {
                             schedule_modifier.increment(next_modifier_date);
                         }
                     }
                 }
-                
+
                 // If we aren't past the schedule to date or end date, create a transaction
-                if next_date <= schedule_to && (self.end_date.is_none() || next_date <= self.end_date.unwrap()) {
+                if next_date <= schedule_to
+                    && (self.end_date.is_none() || next_date <= self.end_date.unwrap())
+                {
                     let transaction_id = Uuid::new_v4();
-                    
+
                     // Build entries inline to avoid borrowing self
                     let mut entries = Vec::new();
                     for entry in &schedule.entries {
@@ -146,14 +159,17 @@ impl Scheduler {
                             balance: None,
                             reconciled_status: None,
                         };
-                        
+
                         // Apply all modifiers in sequence
                         for schedule_modifier in &schedule.schedule_modifiers {
-                            if let Some(modifier) = self.modifiers.get(&schedule_modifier.modifier_id) {
-                                built_entry.amount = schedule_modifier.apply(built_entry.amount, modifier);
+                            if let Some(modifier) =
+                                self.modifiers.get(&schedule_modifier.modifier_id)
+                            {
+                                built_entry.amount =
+                                    schedule_modifier.apply(built_entry.amount, modifier);
                             }
                         }
-                        
+
                         entries.push(built_entry);
                     }
 
@@ -172,7 +188,7 @@ impl Scheduler {
                 }
             }
         }
-        transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));        
+        transactions.sort_by(|a, b| a.entries[0].date.cmp(&b.entries[0].date));
         transactions
     }
 
@@ -183,96 +199,97 @@ impl Scheduler {
     }
 
     /// Generate transactions for a specific schedule. Does not update the scheduler (overall) end_date.
-    pub fn generate_by_schedule(&mut self, end_date: NaiveDate, schedule_id: Uuid) -> Vec<Transaction> {
-        let mut transactions : Vec<Transaction> = Vec::new();
+    pub fn generate_by_schedule(
+        &mut self,
+        end_date: NaiveDate,
+        schedule_id: Uuid,
+    ) -> Vec<Transaction> {
+        let mut transactions: Vec<Transaction> = Vec::new();
 
         if let Some(index) = self.schedules.iter().position(|s| s.id == schedule_id) {
             transactions = self.generate_transactions_for_schedules(&[index], end_date);
         }
         transactions
     }
-
 }
-
-
-
 
 #[cfg(test)]
 
 mod tests {
+    use crate::{
+        account::*,
+        schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum, ScheduleModifier},
+        scheduler::Scheduler,
+    };
+    use chrono::NaiveDate;
     use rust_decimal::Decimal;
-    use uuid::Uuid;
-    use chrono::{NaiveDate};
     use rust_decimal_macros::dec;
-    use crate::{account::*, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum, ScheduleModifier}, scheduler::{Scheduler}};
     use std::fs;
     use std::path::Path;
     use std::str::FromStr;
-
+    use uuid::Uuid;
 
     #[test]
     fn test_generate() {
-        let mut scheduler  = Scheduler::build_empty();
-        
+        let mut scheduler = Scheduler::build_empty();
+
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let s_id_1 = Uuid::new_v4();
-        scheduler.schedules.push(
-            Schedule {
-                id: s_id_1,
-                name: "S_1".to_string(),
-                period: ScheduleEnum::Months,
-                frequency: 3,
-                start_date: from_ymd(2022, 3, 11),
-                end_date: None,
-                last_date: None,
-                entries: vec![
-                    ScheduleEntry {
-                        amount: dec!(100.99),
-                        description: "st test 1".to_string(),
-                        account_id: id1,
-                        entry_type: Side::Debit,
-                        schedule_id: s_id_1,
-                    },
-                    ScheduleEntry {
-                        amount: dec!(100.99),
-                        description: "st test 1".to_string(),
-                        account_id: id2,
-                        entry_type: Side::Credit,
-                        schedule_id: s_id_1,
-                    }
-                ],
-                schedule_modifiers: vec![]
-            });
+        scheduler.schedules.push(Schedule {
+            id: s_id_1,
+            name: "S_1".to_string(),
+            period: ScheduleEnum::Months,
+            frequency: 3,
+            start_date: from_ymd(2022, 3, 11),
+            end_date: None,
+            last_date: None,
+            entries: vec![
+                ScheduleEntry {
+                    amount: dec!(100.99),
+                    description: "st test 1".to_string(),
+                    account_id: id1,
+                    entry_type: Side::Debit,
+                    schedule_id: s_id_1,
+                },
+                ScheduleEntry {
+                    amount: dec!(100.99),
+                    description: "st test 1".to_string(),
+                    account_id: id2,
+                    entry_type: Side::Credit,
+                    schedule_id: s_id_1,
+                },
+            ],
+            schedule_modifiers: vec![],
+        });
 
         let s_id_2 = Uuid::new_v4();
-        scheduler.schedules.push(
-            Schedule {
-                id: s_id_2,
-                name: "S_2".to_string(),
-                period: ScheduleEnum::Days,
-                frequency: 45,
-                start_date: from_ymd(2022, 3, 11),
-                end_date: Some(from_ymd(2023, 1, 20)),
-                last_date: None,
-                entries: vec![
-                    ScheduleEntry {
-                        amount: dec!(20.23),
-                        description: "st test 2".to_string(),
-                        account_id: id2,
-                        entry_type: Side::Debit,
-                        schedule_id: s_id_2,
-                    },
-                    ScheduleEntry {
-                        amount: dec!(100.99),
-                        description: "st test 2".to_string(),
-                        account_id: id1,
-                        entry_type: Side::Credit,
-                        schedule_id: s_id_2,
-                    }
-                ],
-                schedule_modifiers: vec![]
-            });
+        scheduler.schedules.push(Schedule {
+            id: s_id_2,
+            name: "S_2".to_string(),
+            period: ScheduleEnum::Days,
+            frequency: 45,
+            start_date: from_ymd(2022, 3, 11),
+            end_date: Some(from_ymd(2023, 1, 20)),
+            last_date: None,
+            entries: vec![
+                ScheduleEntry {
+                    amount: dec!(20.23),
+                    description: "st test 2".to_string(),
+                    account_id: id2,
+                    entry_type: Side::Debit,
+                    schedule_id: s_id_2,
+                },
+                ScheduleEntry {
+                    amount: dec!(100.99),
+                    description: "st test 2".to_string(),
+                    account_id: id1,
+                    entry_type: Side::Credit,
+                    schedule_id: s_id_2,
+                },
+            ],
+            schedule_modifiers: vec![],
+        });
 
         let transactions = scheduler.generate(from_ymd(2023, 3, 11));
 
@@ -281,8 +298,7 @@ mod tests {
         assert_eq!("st test 1", transactions[4].entries[0].description);
     }
 
-
-        #[test]
+    #[test]
     fn test_multiple_monthly() {
         let s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let schedule = s.clone();
@@ -292,7 +308,10 @@ mod tests {
         let transactions = scheduler.generate_by_schedule(max_date, schedule.id);
         let next = transactions[0].clone();
         assert_eq!(from_ymd(2022, 6, 11), next.entries[0].date);
-        assert_eq!(from_ymd(2022, 9, 11), scheduler.schedules[0].last_date.unwrap());
+        assert_eq!(
+            from_ymd(2022, 9, 11),
+            scheduler.schedules[0].last_date.unwrap()
+        );
         assert_eq!(schedule.entries[0].description, next.entries[0].description);
         assert_eq!(schedule.entries[0].amount, next.entries[0].amount);
         assert_eq!(TransactionStatus::Projected, next.status);
@@ -308,10 +327,13 @@ mod tests {
         let s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let schedule_id = s.id;
         let max_date = from_ymd(2022, 5, 11);
-        let mut scheduler = Scheduler::with_components(vec![s], Some(max_date),  Vec::new());
+        let mut scheduler = Scheduler::with_components(vec![s], Some(max_date), Vec::new());
         let transactions = scheduler.generate_by_schedule(max_date, schedule_id);
         assert_eq!(true, transactions.is_empty());
-        assert_eq!(from_ymd(2022, 3, 11), scheduler.schedules[0].last_date.unwrap());
+        assert_eq!(
+            from_ymd(2022, 3, 11),
+            scheduler.schedules[0].last_date.unwrap()
+        );
     }
 
     #[test]
@@ -319,12 +341,16 @@ mod tests {
         let mut s = build_schedule(3, ScheduleEnum::Months, Vec::new());
         let schedule_id = s.id;
         s.end_date = Some(from_ymd(2022, 5, 11));
-        let mut scheduler = Scheduler::with_components(vec![s], Some(from_ymd(2022, 5, 11)), Vec::new());
+        let mut scheduler =
+            Scheduler::with_components(vec![s], Some(from_ymd(2022, 5, 11)), Vec::new());
         let next = scheduler.generate_by_schedule(from_ymd(2023, 5, 11), schedule_id);
         assert_eq!(true, next.is_empty());
-        assert_eq!(from_ymd(2022, 3, 11), scheduler.schedules[0].last_date.unwrap());
+        assert_eq!(
+            from_ymd(2022, 3, 11),
+            scheduler.schedules[0].last_date.unwrap()
+        );
     }
-       
+
     #[test]
     fn test_tri_monthly_with_annual_modifier() {
         let modifier = Modifier {
@@ -354,7 +380,7 @@ mod tests {
         );
     }
 
-#[test]
+    #[test]
     fn test_monthly_with_multiple_modifiers() {
         let modifier1 = Modifier {
             id: Uuid::new_v4(),
@@ -389,9 +415,13 @@ mod tests {
         };
 
         let schedule = build_schedule(
-            1, ScheduleEnum::Months, vec![schedule_modifier1, schedule_modifier2]);
+            1,
+            ScheduleEnum::Months,
+            vec![schedule_modifier1, schedule_modifier2],
+        );
         let schedule_id = schedule.id;
-        let mut scheduler = Scheduler::with_components(vec![schedule], None, vec![modifier1, modifier2]);
+        let mut scheduler =
+            Scheduler::with_components(vec![schedule], None, vec![modifier1, modifier2]);
 
         assert_schedule_csv(
             &mut scheduler,
@@ -400,13 +430,8 @@ mod tests {
         );
     }
 
-
     /// Assert the scheduler generates the expected transactions from the fixture csv.
-    fn assert_schedule_csv(
-        scheduler: &mut Scheduler,
-        schedule_id: Uuid,
-        fixture_name: &str,
-    ) {
+    fn assert_schedule_csv(scheduler: &mut Scheduler, schedule_id: Uuid, fixture_name: &str) {
         let csv_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
@@ -422,39 +447,63 @@ mod tests {
             let parts: Vec<&str> = line.split(',').map(|part| part.trim()).collect();
             assert_eq!(5, parts.len(), "invalid csv row at line {}", line_index + 1);
 
-            let to_date = NaiveDate::parse_from_str(parts[0], "%Y-%m-%d")
-                .unwrap_or_else(|err| panic!("invalid to_date at line {}: {}", line_index + 1, err));
-            
-            
+            let to_date = NaiveDate::parse_from_str(parts[0], "%Y-%m-%d").unwrap_or_else(|err| {
+                panic!("invalid to_date at line {}: {}", line_index + 1, err)
+            });
+
             let expected_last_tx_date: NaiveDate = NaiveDate::parse_from_str(parts[1], "%Y-%m-%d")
-                .unwrap_or_else(|err| panic!("invalid last_tx_date at line {}: {}", line_index + 1, err));            
-            
-            let expected_last_amount: Option<Decimal> = if parts[2].is_empty() { None } else {
-                Some(Decimal::from_str(parts[2])
-                    .unwrap_or_else(|err| panic!("invalid last_amount at line {}: {}", line_index + 1, err)))
+                .unwrap_or_else(|err| {
+                    panic!("invalid last_tx_date at line {}: {}", line_index + 1, err)
+                });
+
+            let expected_last_amount: Option<Decimal> = if parts[2].is_empty() {
+                None
+            } else {
+                Some(Decimal::from_str(parts[2]).unwrap_or_else(|err| {
+                    panic!("invalid last_amount at line {}: {}", line_index + 1, err)
+                }))
             };
 
             let expected_modifier_last_date = NaiveDate::parse_from_str(parts[3], "%Y-%m-%d")
-                .unwrap_or_else(|err| panic!("invalid modifier_last_date at line {}: {}", line_index + 1, err));
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "invalid modifier_last_date at line {}: {}",
+                        line_index + 1,
+                        err
+                    )
+                });
 
-            let expected_tx_count: usize = parts[4]
-                .parse()
-                .unwrap_or_else(|err| panic!("invalid txn_count at line {}: {}", line_index + 1, err));
+            let expected_tx_count: usize = parts[4].parse().unwrap_or_else(|err| {
+                panic!("invalid txn_count at line {}: {}", line_index + 1, err)
+            });
 
             let transactions = scheduler.generate_by_schedule(to_date, schedule_id);
 
             assert_eq!(expected_tx_count, transactions.len());
-            assert_eq!(expected_last_tx_date, scheduler.schedules[0].last_date.unwrap());
+            assert_eq!(
+                expected_last_tx_date,
+                scheduler.schedules[0].last_date.unwrap()
+            );
             assert_eq!(
                 expected_modifier_last_date,
-                scheduler.schedules[0].schedule_modifiers[0].last_date.unwrap()
+                scheduler.schedules[0].schedule_modifiers[0]
+                    .last_date
+                    .unwrap()
             );
             if transactions.len() > 0 {
-                assert_eq!(expected_last_tx_date, transactions.last().unwrap().entries[0].date);                
-                assert_eq!(expected_last_amount.unwrap(), transactions.last().unwrap().entries[0].amount);
-                assert_eq!(TransactionStatus::Projected, transactions.last().unwrap().status);                
+                assert_eq!(
+                    expected_last_tx_date,
+                    transactions.last().unwrap().entries[0].date
+                );
+                assert_eq!(
+                    expected_last_amount.unwrap(),
+                    transactions.last().unwrap().entries[0].amount
+                );
+                assert_eq!(
+                    TransactionStatus::Projected,
+                    transactions.last().unwrap().status
+                );
             }
-            
         }
     }
 
@@ -463,7 +512,6 @@ mod tests {
         period: ScheduleEnum,
         schedule_modifiers: Vec<ScheduleModifier>,
     ) -> Schedule {
-        
         let mut s = Schedule {
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),

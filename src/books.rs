@@ -1,15 +1,20 @@
-use std::collections::HashSet;
-use std::{collections::HashMap, cmp::Ordering};
+use crate::books_error;
 use chrono::NaiveDate;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashMap};
 use uuid::Uuid;
-use crate::books_error;
 
-use crate::account::{Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus};
-use crate::interest::{Interest, calculate_interest_for_accounts};
-use crate::reconcile::{Field, ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, Signal, TargetResult};
+use crate::account::{
+    Account, AccountType, Entry, ReconciledStatus, Source, Transaction, TransactionStatus,
+};
+use crate::interest::{calculate_interest_for_accounts, Interest};
+use crate::reconcile::{
+    Field, ReconciliationItem, ReconciliationMatchStatus, ReconciliationResult, Signal,
+    TargetResult,
+};
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
 
@@ -42,32 +47,56 @@ impl Books {
         for transaction in transactions.iter() {
             let _ = self.add_transaction(transaction.clone());
         }
-        sort_transactions_by_account(&mut self.transactions, None, TransactionSortOrder::OldestFirst);
+        sort_transactions_by_account(
+            &mut self.transactions,
+            None,
+            TransactionSortOrder::OldestFirst,
+        );
     }
 
-    pub fn generate_by_schedule(&mut self, end_date: NaiveDate, schedule_id: Uuid) -> Vec<Transaction> {
+    pub fn generate_by_schedule(
+        &mut self,
+        end_date: NaiveDate,
+        schedule_id: Uuid,
+    ) -> Vec<Transaction> {
         let transactions = self.scheduler.generate_by_schedule(end_date, schedule_id);
         for transaction in transactions.iter() {
             let _ = self.add_transaction(transaction.clone());
         }
-        sort_transactions_by_account(&mut self.transactions, None, TransactionSortOrder::OldestFirst);
+        sort_transactions_by_account(
+            &mut self.transactions,
+            None,
+            TransactionSortOrder::OldestFirst,
+        );
         transactions
     }
 
     pub fn build_empty(name: &str) -> Books {
-        Books{
+        Books {
             id: Uuid::new_v4(),
             name: name.to_string(),
             version: VERSION.to_string(),
             accounts: HashMap::new(),
-            scheduler: Scheduler::build_empty(), transactions: Vec::new(),
+            scheduler: Scheduler::build_empty(),
+            transactions: Vec::new(),
             interests: HashMap::new(),
-            settings: Settings{ require_double_entry: false },
+            settings: Settings {
+                require_double_entry: false,
+            },
             recalculate_interest: HashSet::new(),
         }
     }
 
-    pub fn with_components(id: Uuid, name: String, version: String, accounts: HashMap<Uuid, Account>, scheduler: Scheduler, transactions: Vec<Transaction>, interests: HashMap<Uuid, Interest>, settings: Settings) -> Books {
+    pub fn with_components(
+        id: Uuid,
+        name: String,
+        version: String,
+        accounts: HashMap<Uuid, Account>,
+        scheduler: Scheduler,
+        transactions: Vec<Transaction>,
+        interests: HashMap<Uuid, Interest>,
+        settings: Settings,
+    ) -> Books {
         Books {
             id,
             name,
@@ -85,7 +114,7 @@ impl Books {
         let mut account = account;
         account.reconciliation_info = None;
         self.flag_interest_outdated_by_account(&account);
-        if ! self.accounts.contains_key(&account.id) {
+        if !self.accounts.contains_key(&account.id) {
             self.accounts.insert(account.id, account);
         }
     }
@@ -96,28 +125,38 @@ impl Books {
             .get(&account.id)
             .ok_or_else(|| books_error!("errors.account_not_found", id => account.id))?;
 
-        let same_reconciliation = match (&account.reconciliation_info, &existing.reconciliation_info) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
-                a.date == b.date && a.balance == b.balance && a.transaction_id == b.transaction_id
-            }
-            _ => false,
-        };
+        let same_reconciliation =
+            match (&account.reconciliation_info, &existing.reconciliation_info) {
+                (None, None) => true,
+                (Some(a), Some(b)) => {
+                    a.date == b.date
+                        && a.balance == b.balance
+                        && a.transaction_id == b.transaction_id
+                }
+                _ => false,
+            };
 
         if !same_reconciliation {
             return Err(books_error!("errors.account_reconciliation_info_immutable"));
         }
 
         if account.account_type != existing.account_type
-            && self.transactions.iter().any(|t| t.involves_account(&account.id))
+            && self
+                .transactions
+                .iter()
+                .any(|t| t.involves_account(&account.id))
         {
-            return Err(books_error!("errors.account_type_immutable_with_transactions"));
+            return Err(books_error!(
+                "errors.account_type_immutable_with_transactions"
+            ));
         }
 
         if account.starting_balance != existing.starting_balance
             && existing.reconciliation_info.is_some()
         {
-            return Err(books_error!("errors.account_starting_balance_immutable_after_reconciliation"));
+            return Err(books_error!(
+                "errors.account_starting_balance_immutable_after_reconciliation"
+            ));
         }
 
         self.flag_interest_outdated_by_account(&account);
@@ -130,7 +169,7 @@ impl Books {
             return Err(books_error!("errors.account_not_found", id => id));
         }
 
-        if self.transactions.iter().any(|t|t.involves_account(id)) {
+        if self.transactions.iter().any(|t| t.involves_account(id)) {
             return Err(books_error!("errors.account_cannot_delete_with_transactions", id => id));
         }
 
@@ -142,7 +181,10 @@ impl Books {
     }
 
     pub fn get_account(&self, id: &Uuid) -> Result<Account, BooksError> {
-        self.accounts.get(id).cloned().ok_or(books_error!("errors.account_not_found", id => id))
+        self.accounts
+            .get(id)
+            .cloned()
+            .ok_or(books_error!("errors.account_not_found", id => id))
     }
 
     pub fn accounts(&self) -> Vec<Account> {
@@ -154,9 +196,9 @@ impl Books {
         accounts_clone.sort_by(|a, b| {
             let result = a.account_type.order().cmp(&b.account_type.order());
             if result == Ordering::Equal {
-                return a.name.cmp(&b.name)
+                return a.name.cmp(&b.name);
             }
-            return result
+            return result;
         });
         accounts_clone
     }
@@ -169,20 +211,21 @@ impl Books {
     }
 
     fn validate_transaction(&mut self, transaction: &Transaction) -> Result<(), BooksError> {
-
         for e in transaction.entries.as_slice() {
             self.valid_account_id(e.account_id)?;
         }
 
         if self.settings.require_double_entry && transaction.entries.len() < 2 {
-            return Err(books_error!("errors.transaction_requires_two_entries"))
+            return Err(books_error!("errors.transaction_requires_two_entries"));
         } else if transaction.entries.len() < 1 {
-            return Err(books_error!("errors.transaction_requires_one_entry"))
+            return Err(books_error!("errors.transaction_requires_one_entry"));
         }
 
         // Using transaction date to avoid potential reconciliation edge case for split date entries.
-        if transaction.status == TransactionStatus::Recorded && transaction.date() > Some(chrono::Utc::now().date_naive()) {
-            return Err(books_error!("errors.future_transaction_set_as_recorded"))
+        if transaction.status == TransactionStatus::Recorded
+            && transaction.date() > Some(chrono::Utc::now().date_naive())
+        {
+            return Err(books_error!("errors.future_transaction_set_as_recorded"));
         }
 
         self.valid_account_id(transaction.entries[0].account_id)?;
@@ -197,12 +240,16 @@ impl Books {
 
         // for each original transaction entry that is reconciled or outstanding find the matching transaction entry
         // if the transaction entry is not the same return error
-        if let Some(orginal_transaction) = self.transactions.iter().find(|t| t.id == transaction.id) {
+        if let Some(orginal_transaction) = self.transactions.iter().find(|t| t.id == transaction.id)
+        {
             for original_entry in orginal_transaction.entries.iter() {
                 if original_entry.is_reconciled_or_outstanding() {
-                    let matching_entry = transaction.entries.iter().find(|e| e.account_id == original_entry.account_id);
+                    let matching_entry = transaction
+                        .entries
+                        .iter()
+                        .find(|e| e.account_id == original_entry.account_id);
                     if matching_entry.is_none() || matching_entry.unwrap() != original_entry {
-                        return Err(books_error!("errors.reconciled_entry_immutable"))
+                        return Err(books_error!("errors.reconciled_entry_immutable"));
                     }
                 }
             }
@@ -217,15 +264,21 @@ impl Books {
         for entry in &transaction.entries {
             // Check if this entry exists in original transaction as reconciled or outstanding
 
-            if original_transaction.is_none_or(
-                |original_transaction| original_transaction.entries.iter()
-                    .any(|e| e.account_id == entry.account_id && ! e.is_reconciled_or_outstanding())) {
-
+            if original_transaction.is_none_or(|original_transaction| {
+                original_transaction
+                    .entries
+                    .iter()
+                    .any(|e| e.account_id == entry.account_id && !e.is_reconciled_or_outstanding())
+            }) {
                 // Check if account exists and has reconciliation info
                 if let Some(account) = self.accounts.get(&entry.account_id) {
                     if let Some(reconciliation_info) = &account.reconciliation_info {
                         if reconciliation_info.date > entry.date {
-                            return Err(books_error!("errors.transaction_before_reconciliation_date", transaction_date = entry.date, reconciliation_date = reconciliation_info.date));
+                            return Err(books_error!(
+                                "errors.transaction_before_reconciliation_date",
+                                transaction_date = entry.date,
+                                reconciliation_date = reconciliation_info.date
+                            ));
                         }
                     }
                 }
@@ -236,10 +289,13 @@ impl Books {
     }
 
     pub fn update_transaction(&mut self, transaction: Transaction) -> Result<(), BooksError> {
-
         self.validate_transaction(&transaction)?;
 
-        if let Some(index) = self.transactions.iter().position(|t| t.id == transaction.id) {
+        if let Some(index) = self
+            .transactions
+            .iter()
+            .position(|t| t.id == transaction.id)
+        {
             self.flag_interest_outdated(&transaction);
             let old = std::mem::replace(&mut self.transactions[index], transaction);
             self.flag_interest_outdated(&old);
@@ -247,23 +303,34 @@ impl Books {
         } else {
             Err(books_error!("errors.transaction_not_found", id => transaction.id))
         }
-
     }
 
-    fn reconcile_transaction(&mut self, mut transaction: Transaction, account_id: Uuid, status: ReconciledStatus) -> Result<(), BooksError> {
-
+    fn reconcile_transaction(
+        &mut self,
+        mut transaction: Transaction,
+        account_id: Uuid,
+        status: ReconciledStatus,
+    ) -> Result<(), BooksError> {
         self.validate_transaction(&transaction)?;
 
         let transaction_id = transaction.id;
 
-        if let Some(entry) = transaction.entries.iter_mut().find(|e| e.account_id == account_id) {
-            if entry.reconciled_status.is_none_or(|rs|rs != status) {
+        if let Some(entry) = transaction
+            .entries
+            .iter_mut()
+            .find(|e| e.account_id == account_id)
+        {
+            if entry.reconciled_status.is_none_or(|rs| rs != status) {
                 entry.reconciled_status = Some(status);
                 transaction.status = TransactionStatus::Recorded;
-                if let Some(index) = self.transactions.iter().position(|t| t.id == transaction_id) {
+                if let Some(index) = self
+                    .transactions
+                    .iter()
+                    .position(|t| t.id == transaction_id)
+                {
                     let _old = std::mem::replace(&mut self.transactions[index], transaction);
                 } else {
-                    return Err(books_error!("errors.transaction_not_found", id => transaction_id))
+                    return Err(books_error!("errors.transaction_not_found", id => transaction_id));
                 }
             }
         }
@@ -274,7 +341,11 @@ impl Books {
     pub fn delete_transaction(&mut self, id: &Uuid) -> Result<(), BooksError> {
         if let Some(index) = self.transactions.iter().position(|t| t.id == *id) {
             // Check reconciled status first
-            if self.transactions[index].entries.iter().any(|e| e.is_reconciled_or_outstanding()) {
+            if self.transactions[index]
+                .entries
+                .iter()
+                .any(|e| e.is_reconciled_or_outstanding())
+            {
                 return Err(books_error!("errors.cannot_delete_reconciled_transaction"));
             }
             let transaction = self.transactions.remove(index);
@@ -289,21 +360,25 @@ impl Books {
         self.transactions.as_slice()
     }
 
-    pub fn transaction(&self, transaction_id: Uuid) ->  Option<Transaction> {
-        let matches:Vec<Transaction> = self.transactions.iter()
-            .filter(|t|t.id == transaction_id)
+    pub fn transaction(&self, transaction_id: Uuid) -> Option<Transaction> {
+        let matches: Vec<Transaction> = self
+            .transactions
+            .iter()
+            .filter(|t| t.id == transaction_id)
             .map(|t| t.clone())
             .collect();
 
         if matches.len() > 0 {
-            return Some(matches[0].clone())
+            return Some(matches[0].clone());
         }
 
         None
     }
 
     fn flag_interest_outdated(&mut self, transaction: &Transaction) -> bool {
-        if self.interest_outdated() { return true }
+        if self.interest_outdated() {
+            return true;
+        }
         transaction.entries.iter().any(|entry| {
             if let Some(account) = self.accounts.get(&entry.account_id) {
                 if account.interest_id.is_some() {
@@ -315,7 +390,9 @@ impl Books {
     }
 
     fn flag_interest_outdated_by_account(&mut self, account: &Account) -> bool {
-        if self.interest_outdated() { return true }
+        if self.interest_outdated() {
+            return true;
+        }
 
         if account.interest_id.is_some() {
             self.recalculate_interest.insert(account.id);
@@ -330,33 +407,33 @@ impl Books {
             return Err(books_error!("errors.account_not_found", id => account_id));
         }
 
-        let mut account_transactions: Vec<Transaction> =
-            self.transactions
-                .iter()
-                .filter(|t|t.involves_account(&account_id))
-                .map(|t| t.clone())
-                .collect();
+        let mut account_transactions: Vec<Transaction> = self
+            .transactions
+            .iter()
+            .filter(|t| t.involves_account(&account_id))
+            .map(|t| t.clone())
+            .collect();
 
-        sort_transactions_by_account(&mut account_transactions, Some(account_id), TransactionSortOrder::OldestFirst);
+        sort_transactions_by_account(
+            &mut account_transactions,
+            Some(account_id),
+            TransactionSortOrder::OldestFirst,
+        );
         let account = self.accounts.get(&account_id).unwrap();
         let mut balance = account.starting_balance;
         let mut account_entries: Vec<Entry> = Vec::new();
-        account_transactions
-            .iter()
-            .for_each(|t| t.account_entries(account_id)
-                .iter()
-                .for_each(|e|{
-                    if e.entry_type == account.normal_balance() {
-                        balance = balance + e.amount;
-                    } else {
-                        balance = balance - e.amount;
-                    };
-                    let mut new_e = e.clone();
-                    new_e.set_balance(Some(balance.clone()));
-                    account_entries.push(new_e);
-                }
-                )
-            );
+        account_transactions.iter().for_each(|t| {
+            t.account_entries(account_id).iter().for_each(|e| {
+                if e.entry_type == account.normal_balance() {
+                    balance = balance + e.amount;
+                } else {
+                    balance = balance - e.amount;
+                };
+                let mut new_e = e.clone();
+                new_e.set_balance(Some(balance.clone()));
+                account_entries.push(new_e);
+            })
+        });
 
         account_entries.sort_by(|a, b| a.date.cmp(&b.date));
         Ok(account_entries)
@@ -368,18 +445,22 @@ impl Books {
             return Err(books_error!("errors.account_not_found", id => account_id));
         }
 
-        let account_transactions: Vec<(usize, Transaction)> =
-            self.transactions
-                .iter()
-                .filter(|t| t.involves_account(&account_id))
-                .enumerate()
-                .map(|(idx, t)| (idx, t.clone()))
-                .collect();
+        let account_transactions: Vec<(usize, Transaction)> = self
+            .transactions
+            .iter()
+            .filter(|t| t.involves_account(&account_id))
+            .enumerate()
+            .map(|(idx, t)| (idx, t.clone()))
+            .collect();
 
         let mut account_transactions: Vec<Transaction> =
             account_transactions.into_iter().map(|(_, t)| t).collect();
 
-        sort_transactions_by_account(&mut account_transactions, Some(account_id), TransactionSortOrder::OldestFirst);
+        sort_transactions_by_account(
+            &mut account_transactions,
+            Some(account_id),
+            TransactionSortOrder::OldestFirst,
+        );
         let account = self.accounts.get(&account_id).unwrap();
         let mut balance = account.starting_balance;
 
@@ -389,7 +470,6 @@ impl Books {
         Ok(account_transactions)
     }
 
-
     pub fn add_schedule(&mut self, schedule: Schedule) -> Result<(), BooksError> {
         self.validate_schedule(&schedule)?;
         self.scheduler.add_schedule(schedule);
@@ -397,9 +477,8 @@ impl Books {
     }
 
     fn validate_schedule(&mut self, schedule: &Schedule) -> Result<(), BooksError> {
-
         if schedule.entries.len() < 1 {
-            return Err(books_error!("errors.schedule_requires_entry"))
+            return Err(books_error!("errors.schedule_requires_entry"));
         }
 
         for e in schedule.entries.iter() {
@@ -421,7 +500,11 @@ impl Books {
         }
 
         // Check if any transactions reference this schedule
-        if self.transactions.iter().any(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(*id)}) {
+        if self
+            .transactions
+            .iter()
+            .any(|t| t.source_type == Some(Source::Schedule) && t.source_id == Some(*id))
+        {
             return Err(books_error!("errors.schedule_cannot_delete_with_transactions", id => id));
         }
 
@@ -440,36 +523,42 @@ impl Books {
         self.scheduler.end_date()
     }
 
-    pub fn transactions_by_schedule(&self, schedule_id: Uuid, status: Option<TransactionStatus>) -> Vec<Transaction> {
+    pub fn transactions_by_schedule(
+        &self,
+        schedule_id: Uuid,
+        status: Option<TransactionStatus>,
+    ) -> Vec<Transaction> {
         self.transactions
             .iter()
-            .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
-            .filter(|t| {
-                match status {
-                    Some(filter_status) => t.status == filter_status,
-                    None => true,
-                }
+            .filter(|t| t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id))
+            .filter(|t| match status {
+                Some(filter_status) => t.status == filter_status,
+                None => true,
             })
             .map(|t| t.clone())
             .collect()
     }
 
-    pub fn transactions_by_interest(&self, interest_id: Uuid, status: Option<TransactionStatus>, from: Option<NaiveDate>) -> Vec<Transaction> {
-        print!("transactions_by_interest called with interest_id: {}, status: {:?}, from: {:?}", interest_id, status, from);
+    pub fn transactions_by_interest(
+        &self,
+        interest_id: Uuid,
+        status: Option<TransactionStatus>,
+        from: Option<NaiveDate>,
+    ) -> Vec<Transaction> {
+        print!(
+            "transactions_by_interest called with interest_id: {}, status: {:?}, from: {:?}",
+            interest_id, status, from
+        );
         self.transactions
             .iter()
-            .filter(|t| {t.source_type == Some(Source::Interest) && t.source_id == Some(interest_id)})
-            .filter(|t| {
-                match from {
-                    Some(filter_from) => t.date() >= Some(filter_from),
-                    None => true,
-                }
+            .filter(|t| t.source_type == Some(Source::Interest) && t.source_id == Some(interest_id))
+            .filter(|t| match from {
+                Some(filter_from) => t.date() >= Some(filter_from),
+                None => true,
             })
-            .filter(|t| {
-                match status {
-                    Some(filter_status) => t.status == filter_status,
-                    None => true,
-                }
+            .filter(|t| match status {
+                Some(filter_status) => t.status == filter_status,
+                None => true,
             })
             .map(|t| t.clone())
             .collect()
@@ -516,7 +605,6 @@ impl Books {
     }
 
     pub fn add_interest(&mut self, interest: Interest) -> Result<(), BooksError> {
-
         if let Some(account) = self.accounts.get_mut(&interest.account_id) {
             account.interest_id = Some(interest.id);
             self.validate_interest(&interest)?;
@@ -526,11 +614,11 @@ impl Books {
         } else {
             return Err(books_error!("errors.account_not_found", id => interest.account_id));
         }
-
     }
 
     pub fn get_interest(&self, interest_id: &Uuid) -> Result<Interest, BooksError> {
-        self.interests.get(interest_id)
+        self.interests
+            .get(interest_id)
             .cloned()
             .ok_or(books_error!("errors.interest_info_not_found", id => interest_id))
     }
@@ -539,7 +627,9 @@ impl Books {
         self.validate_interest(&interest)?;
         self.check_recalculate_interest(&interest);
 
-        let account = self.accounts.get(&interest.account_id)
+        let account = self
+            .accounts
+            .get(&interest.account_id)
             .ok_or(books_error!("errors.account_not_found", id => interest.account_id))?;
 
         if let Some(interest_id) = account.interest_id {
@@ -568,26 +658,27 @@ impl Books {
         self.interests.values().collect()
     }
 
-
     fn validate_interest(&mut self, interest: &Interest) -> Result<(), BooksError> {
-
         self.valid_account_id(interest.account_id)?;
 
         for t in interest.terms.as_slice() {
-
             if let Some(interest_account_id) = t.interest_account_id {
                 self.valid_account_id(interest_account_id)?;
                 let account = self.get_account(&interest_account_id)?;
-                if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability {
-                    return Err(books_error!("errors.invalid_account_type", name => account.name))
+                if account.account_type != AccountType::Asset
+                    && account.account_type != AccountType::Liability
+                {
+                    return Err(books_error!("errors.invalid_account_type", name => account.name));
                 }
             }
 
             if let Some(income_account_id) = t.income_account_id {
                 self.valid_account_id(income_account_id)?;
                 let account = self.get_account(&income_account_id)?;
-                if account.account_type != AccountType::Revenue && account.account_type != AccountType::Expense {
-                    return Err(books_error!("errors.invalid_account_type", name => account.name))
+                if account.account_type != AccountType::Revenue
+                    && account.account_type != AccountType::Expense
+                {
+                    return Err(books_error!("errors.invalid_account_type", name => account.name));
                 }
             }
         }
@@ -595,10 +686,14 @@ impl Books {
         Ok(())
     }
 
-    pub fn reset_schedule_last_date(&mut self, schedule_id: Uuid) -> Result<Option<NaiveDate>, BooksError> {
-        let mut transactions: Vec<Transaction> = self.transactions
+    pub fn reset_schedule_last_date(
+        &mut self,
+        schedule_id: Uuid,
+    ) -> Result<Option<NaiveDate>, BooksError> {
+        let mut transactions: Vec<Transaction> = self
+            .transactions
             .iter()
-            .filter(|t| {t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id)})
+            .filter(|t| t.source_type == Some(Source::Schedule) && t.source_id == Some(schedule_id))
             .map(|t| t.clone())
             .collect();
 
@@ -627,18 +722,26 @@ impl Books {
             .into_iter()
             .filter(|t| t.involves_account(&account_id))
             .collect();
-        sort_transactions_by_account(&mut input_txns, Some(account_id), TransactionSortOrder::OldestFirst);
+        sort_transactions_by_account(
+            &mut input_txns,
+            Some(account_id),
+            TransactionSortOrder::OldestFirst,
+        );
 
         // 2) Load existing account transactions (with balances) and track matched indices.
         let existing_txns = self.account_transactions(account_id)?;
         let existing_targets: Vec<(usize, Uuid, Entry)> = existing_txns
             .iter()
             .enumerate()
-            .filter_map(|(i, txn)| txn.find_entry_by_account(&account_id).map(|target| (i, txn.id, target.clone())))
+            .filter_map(|(i, txn)| {
+                txn.find_entry_by_account(&account_id)
+                    .map(|target| (i, txn.id, target.clone()))
+            })
             .collect();
         let mut matched_indices: HashSet<usize> = HashSet::new();
 
-        let mut results: Vec<ReconciliationItem> = Vec::with_capacity(input_txns.len() + existing_txns.len());
+        let mut results: Vec<ReconciliationItem> =
+            Vec::with_capacity(input_txns.len() + existing_txns.len());
 
         for input in input_txns.iter() {
             // 3) Extract the account entry details from the input transaction.
@@ -660,10 +763,13 @@ impl Books {
                             best_candidate = Some((*target_idx, *target_txn_id, candidate));
                         }
                         Some((_, _, best_candidate_match)) => {
-                            let better_status = status_rank(&candidate.status) > status_rank(&best_candidate_match.status);
-                            let same_status = status_rank(&candidate.status) == status_rank(&best_candidate_match.status);
+                            let better_status = status_rank(&candidate.status)
+                                > status_rank(&best_candidate_match.status);
+                            let same_status = status_rank(&candidate.status)
+                                == status_rank(&best_candidate_match.status);
                             if candidate.confidence > best_candidate_match.confidence
-                                || (candidate.confidence == best_candidate_match.confidence && better_status)
+                                || (candidate.confidence == best_candidate_match.confidence
+                                    && better_status)
                                 || (candidate.confidence == best_candidate_match.confidence
                                     && same_status
                                     && candidate.status == ReconciliationMatchStatus::Matched)
@@ -675,24 +781,30 @@ impl Books {
                 }
             }
 
-            let (status, matched_id, confidence, signals) = if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
-                matched_indices.insert(match_idx);
-                (
-                    candidate.status,
-                    Some(matched_txn_id),
-                    candidate.confidence,
-                    candidate.signals,
-                )
-            } else {
-                let (confidence, signals) = score_unmatched_reconciliation(
-                    entry,
-                    existing_targets
-                        .iter()
-                        .filter(|(idx, _, _)| !matched_indices.contains(idx))
-                        .map(|(_, _, candidate)| candidate),
-                );
-                (ReconciliationMatchStatus::Unmatched, None, confidence, signals)
-            };
+            let (status, matched_id, confidence, signals) =
+                if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
+                    matched_indices.insert(match_idx);
+                    (
+                        candidate.status,
+                        Some(matched_txn_id),
+                        candidate.confidence,
+                        candidate.signals,
+                    )
+                } else {
+                    let (confidence, signals) = score_unmatched_reconciliation(
+                        entry,
+                        existing_targets
+                            .iter()
+                            .filter(|(idx, _, _)| !matched_indices.contains(idx))
+                            .map(|(_, _, candidate)| candidate),
+                    );
+                    (
+                        ReconciliationMatchStatus::Unmatched,
+                        None,
+                        confidence,
+                        signals,
+                    )
+                };
 
             // 5) Record this input transaction's reconciliation outcome.
             results.push(ReconciliationItem::Reconciliation(ReconciliationResult {
@@ -706,14 +818,19 @@ impl Books {
         }
 
         // 6) Add existing transactions to results, splicing matched reconciliation transactions immediately after their targets
-        let mut final_results: Vec<ReconciliationItem> = Vec::with_capacity(existing_txns.len() + results.len());
-        let mut reconciliation_lookup: std::collections::HashMap<Uuid, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
+        let mut final_results: Vec<ReconciliationItem> =
+            Vec::with_capacity(existing_txns.len() + results.len());
+        let mut reconciliation_lookup: std::collections::HashMap<Uuid, Vec<&ReconciliationItem>> =
+            std::collections::HashMap::new();
 
         // Group reconciliation transactions by their matched target ID
         for reconciliation_item in &results {
             if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
                 if let Some(matched_id) = recon_result.matched_transaction_id {
-                    reconciliation_lookup.entry(matched_id).or_insert_with(Vec::new).push(reconciliation_item);
+                    reconciliation_lookup
+                        .entry(matched_id)
+                        .or_insert_with(Vec::new)
+                        .push(reconciliation_item);
                 }
             }
         }
@@ -749,8 +866,11 @@ impl Books {
                 if !matches.is_empty() {
                     if let ReconciliationItem::Reconciliation(recon_result) = matches[0] {
                         if let Some(_target_id) = recon_result.matched_transaction_id {
-                            if let ReconciliationItem::Original(ref mut target_result) = original_item {
-                                target_result.matched_reconciliation_id = Some(recon_result.transaction.id);
+                            if let ReconciliationItem::Original(ref mut target_result) =
+                                original_item
+                            {
+                                target_result.matched_reconciliation_id =
+                                    Some(recon_result.transaction.id);
                             }
                         }
                     }
@@ -769,14 +889,22 @@ impl Books {
 
         // Add unmatched reconciliation transactions, inserting them by date
         // Group unmatched transactions by date for efficient insertion
-        let mut unmatched_by_date: std::collections::HashMap<chrono::NaiveDate, Vec<&ReconciliationItem>> = std::collections::HashMap::new();
+        let mut unmatched_by_date: std::collections::HashMap<
+            chrono::NaiveDate,
+            Vec<&ReconciliationItem>,
+        > = std::collections::HashMap::new();
 
         for reconciliation_item in &results {
             if let ReconciliationItem::Reconciliation(recon_result) = reconciliation_item {
                 if recon_result.matched_transaction_id.is_none() {
-                    let entry = recon_result.transaction.find_entry_by_account(&account_id)
+                    let entry = recon_result
+                        .transaction
+                        .find_entry_by_account(&account_id)
                         .expect("reconciliation transaction involves account");
-                    unmatched_by_date.entry(entry.date).or_insert_with(Vec::new).push(reconciliation_item);
+                    unmatched_by_date
+                        .entry(entry.date)
+                        .or_insert_with(Vec::new)
+                        .push(reconciliation_item);
                 }
             }
         }
@@ -789,12 +917,18 @@ impl Books {
             for (i, result_item) in final_results.iter().enumerate() {
                 let item_date = match result_item {
                     ReconciliationItem::Reconciliation(recon) => {
-                        recon.transaction.find_entry_by_account(&account_id)
-                            .expect("reconciliation transaction involves account").date
+                        recon
+                            .transaction
+                            .find_entry_by_account(&account_id)
+                            .expect("reconciliation transaction involves account")
+                            .date
                     }
                     ReconciliationItem::Original(target) => {
-                        target.transaction.find_entry_by_account(&account_id)
-                            .expect("target transaction involves account").date
+                        target
+                            .transaction
+                            .find_entry_by_account(&account_id)
+                            .expect("target transaction involves account")
+                            .date
                     }
                 };
 
@@ -841,9 +975,15 @@ impl Books {
         Ok(final_results)
     }
 
-
-    pub fn reconcile_account_transactions(&mut self, account_id: Uuid, transaction_ids: Vec<Uuid>) -> Result<(), BooksError> {
-        println!("Reconciling account transactions for account {} transactions: {:?}", account_id, transaction_ids);
+    pub fn reconcile_account_transactions(
+        &mut self,
+        account_id: Uuid,
+        transaction_ids: Vec<Uuid>,
+    ) -> Result<(), BooksError> {
+        println!(
+            "Reconciling account transactions for account {} transactions: {:?}",
+            account_id, transaction_ids
+        );
         if !self.accounts.contains_key(&account_id) {
             return Err(books_error!("errors.account_not_found", id => account_id));
         }
@@ -851,12 +991,23 @@ impl Books {
         let mut account_transactions = self.account_transactions(account_id)?;
         let mut new_recon_transaction: Option<Transaction> = None;
         // set the last index to the account reconciliation_info transaction_id index
-        let mut last_index: Option<usize> = self.accounts.get(&account_id).unwrap().reconciliation_info.as_ref().map(|info| info.transaction_id).map(|id| account_transactions.iter().position(|t| t.id == id).unwrap());
+        let mut last_index: Option<usize> = self
+            .accounts
+            .get(&account_id)
+            .unwrap()
+            .reconciliation_info
+            .as_ref()
+            .map(|info| info.transaction_id)
+            .map(|id| {
+                account_transactions
+                    .iter()
+                    .position(|t| t.id == id)
+                    .unwrap()
+            });
         let mut first_index: Option<usize> = None;
 
         // Reconcile each transaction.
         for transaction_id in transaction_ids {
-
             let idx = account_transactions.iter().position(|t| t.id == transaction_id).ok_or_else(|| {
                 books_error!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id)
             })?;
@@ -865,24 +1016,38 @@ impl Books {
                 books_error!("errors.transaction_not_found_for_account", transaction_id => transaction_id, account_id => account_id)
             })?;
 
-            self.reconcile_transaction(transaction.clone(), account_id, ReconciledStatus::Reconciled)?;
+            self.reconcile_transaction(
+                transaction.clone(),
+                account_id,
+                ReconciledStatus::Reconciled,
+            )?;
 
-            if last_index.is_none_or(|li|li < idx) {
+            if last_index.is_none_or(|li| li < idx) {
                 last_index = Some(idx);
                 new_recon_transaction = Some(transaction.clone())
             }
 
-            if first_index.is_none_or(|fi|fi > idx) {
+            if first_index.is_none_or(|fi| fi > idx) {
                 first_index = Some(idx);
             }
         }
 
         // Flag any now outstanding transactions before the first transaction.
         if let Some(first_index) = first_index {
-            for earlier_transaction in account_transactions.iter_mut().take(first_index)
-                    .filter(|t|t.find_entry_by_account(&account_id)
-                    .is_some_and(|e|e.reconciled_status.is_none())) {
-                self.reconcile_transaction(earlier_transaction.clone(), account_id, ReconciledStatus::Outstanding)?;
+            for earlier_transaction in
+                account_transactions
+                    .iter_mut()
+                    .take(first_index)
+                    .filter(|t| {
+                        t.find_entry_by_account(&account_id)
+                            .is_some_and(|e| e.reconciled_status.is_none())
+                    })
+            {
+                self.reconcile_transaction(
+                    earlier_transaction.clone(),
+                    account_id,
+                    ReconciledStatus::Outstanding,
+                )?;
             }
         }
 
@@ -901,8 +1066,11 @@ impl Books {
         Ok(())
     }
 
-
-    pub fn rollback_reconciliation(&mut self, account_id: Uuid, to_date: NaiveDate) -> Result<(), BooksError> {
+    pub fn rollback_reconciliation(
+        &mut self,
+        account_id: Uuid,
+        to_date: NaiveDate,
+    ) -> Result<(), BooksError> {
         if !self.accounts.contains_key(&account_id) {
             return Err(books_error!("errors.account_not_found", id => account_id));
         }
@@ -938,8 +1106,16 @@ impl Books {
             };
 
             if should_clear {
-                if let Some(existing) = self.transactions.iter_mut().find(|t| t.id == transaction.id) {
-                    if let Some(entry) = existing.entries.iter_mut().find(|e| e.account_id == account_id) {
+                if let Some(existing) = self
+                    .transactions
+                    .iter_mut()
+                    .find(|t| t.id == transaction.id)
+                {
+                    if let Some(entry) = existing
+                        .entries
+                        .iter_mut()
+                        .find(|e| e.account_id == account_id)
+                    {
                         entry.reconciled_status = None;
                     }
                 }
@@ -957,11 +1133,13 @@ impl Books {
         }
     }
 
-    pub fn recalculate_interest(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
+    pub fn recalculate_interest(&mut self, projection_date: NaiveDate) -> Result<(), BooksError> {
         println!("Calculating interest...");
-        let interest_accounts = self.accounts().into_iter().filter(|a| {
-            self.recalculate_interest.contains(&a.id) && a.interest_id.is_some()
-        }).collect();
+        let interest_accounts = self
+            .accounts()
+            .into_iter()
+            .filter(|a| self.recalculate_interest.contains(&a.id) && a.interest_id.is_some())
+            .collect();
         calculate_interest_for_accounts(self, interest_accounts, projection_date)?;
         println!("Interest up-to-date ✅");
         Ok(())
@@ -975,17 +1153,21 @@ impl Books {
         !self.recalculate_interest.is_empty()
     }
 
-    pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError>{
+    pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError> {
         println!("Running checks 📋  Projection date: {}", projection_date);
         println!("Generating schedules...");
         self.generate(projection_date);
-        let interest_accounts = self.accounts.values().filter(|a| a.interest_id.is_some()).cloned().collect();
+        let interest_accounts = self
+            .accounts
+            .values()
+            .filter(|a| a.interest_id.is_some())
+            .cloned()
+            .collect();
         println!("Calculating interest...");
         calculate_interest_for_accounts(self, interest_accounts, projection_date)?;
         println!("Checks completed ✅");
         Ok(())
     }
-
 }
 
 struct MatchCandidate {
@@ -1003,10 +1185,7 @@ struct CandidateVariances {
     balance: Option<f32>,
 }
 
-fn evaluate_match_candidate(
-    rec_entry: &Entry,
-    target_entry: &Entry,
-) -> Option<MatchCandidate> {
+fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<MatchCandidate> {
     let within_14_days = (target_entry.date - rec_entry.date).num_days().abs() <= 14;
     if !within_14_days {
         return None;
@@ -1070,10 +1249,15 @@ fn evaluate_match_candidate(
 
 fn calculate_candidate_variances(rec_entry: &Entry, target_entry: &Entry) -> CandidateVariances {
     let amount = relative_decimal_variance(rec_entry.amount, target_entry.amount);
-    let side = if rec_entry.entry_type == target_entry.entry_type { 0.0 } else { 1.0 };
+    let side = if rec_entry.entry_type == target_entry.entry_type {
+        0.0
+    } else {
+        1.0
+    };
     let date_days = (rec_entry.date - target_entry.date).num_days().abs() as f32;
     let date = (date_days / 14.0).min(1.0);
-    let description_similarity = reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
+    let description_similarity =
+        reconciliation_description_similarity(&rec_entry.description, &target_entry.description);
     let description = (1.0 - description_similarity).clamp(0.0, 1.0);
     let balance = match (rec_entry.balance, target_entry.balance) {
         (Some(a), Some(b)) => Some(relative_decimal_variance(a, b)),
@@ -1131,7 +1315,12 @@ where
 {
     let mut signals: Vec<Signal> = vec![Signal::new(Field::Linkage, -1.0)];
     signals.push(build_unmatched_signal(rec_entry, candidates));
-    (clamp_reconciliation_confidence(status_base_confidence(&ReconciliationMatchStatus::Unmatched)), signals)
+    (
+        clamp_reconciliation_confidence(status_base_confidence(
+            &ReconciliationMatchStatus::Unmatched,
+        )),
+        signals,
+    )
 }
 
 fn build_unmatched_signal<'a, I>(rec_entry: &Entry, candidates: I) -> Signal
@@ -1142,7 +1331,8 @@ where
 
     for target in candidates {
         let date_diff = (rec_entry.date - target.date).num_days().abs();
-        let desc_similarity = reconciliation_description_similarity(&rec_entry.description, &target.description);
+        let desc_similarity =
+            reconciliation_description_similarity(&rec_entry.description, &target.description);
         let mut candidate_score = 0_i32;
 
         if rec_entry.amount == target.amount {
@@ -1167,7 +1357,9 @@ where
         match best_candidate {
             None => best_candidate = Some((candidate_score, date_diff)),
             Some((best_score, best_diff)) => {
-                if candidate_score > best_score || (candidate_score == best_score && date_diff < best_diff) {
+                if candidate_score > best_score
+                    || (candidate_score == best_score && date_diff < best_diff)
+                {
                     best_candidate = Some((candidate_score, date_diff));
                 }
             }
@@ -1292,7 +1484,9 @@ pub struct BooksError {
 
 impl BooksError {
     pub fn from_str(name: &str) -> BooksError {
-        BooksError { error: String::from(name) }
+        BooksError {
+            error: String::from(name),
+        }
     }
 }
 

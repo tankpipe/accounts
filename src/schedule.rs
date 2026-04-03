@@ -7,14 +7,13 @@ use rust_decimal::prelude::*;
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::account::Side;
 use crate::serializer::*;
 use serde::Deserialize;
-use crate::account::{Side};
 
 pub const DECIMAL_PRECISION: u32 = 4;
 
 /// Schedule models.
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ScheduleEntry {
@@ -53,7 +52,6 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    
     /// Calculate the next traṉsaction date for this schedule with the default being the schedule start_date.
     pub fn get_next_date(&self) -> NaiveDate {
         match self.last_date {
@@ -78,12 +76,22 @@ pub fn calculate_next_date(
 ) -> NaiveDate {
     let mut new_date: NaiveDate;
     match period {
-        ScheduleEnum::Days => new_date = prev_date.checked_add_signed(Duration::days(frequency)).unwrap(),            
-        ScheduleEnum::Weeks => new_date = prev_date.checked_add_signed(Duration::days(frequency * 7)).unwrap(),
+        ScheduleEnum::Days => {
+            new_date = prev_date
+                .checked_add_signed(Duration::days(frequency))
+                .unwrap()
+        }
+        ScheduleEnum::Weeks => {
+            new_date = prev_date
+                .checked_add_signed(Duration::days(frequency * 7))
+                .unwrap()
+        }
         ScheduleEnum::Months => new_date = shift_months(prev_date, frequency.try_into().unwrap()),
         ScheduleEnum::Years => new_date = shift_years(prev_date, frequency.try_into().unwrap()),
     }
-    if (period == ScheduleEnum::Months || period == ScheduleEnum::Years) && new_date.day() < start_date.day() {
+    if (period == ScheduleEnum::Months || period == ScheduleEnum::Years)
+        && new_date.day() < start_date.day()
+    {
         let new_month = new_date.month();
         let mut result = new_date.checked_add_signed(Duration::days(1));
         while result.is_some() && result.unwrap().month() == new_month {
@@ -93,7 +101,6 @@ pub fn calculate_next_date(
     }
     new_date
 }
-
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Modifier {
@@ -121,13 +128,7 @@ impl Modifier {
     }
 
     pub fn get_next_date(&self, prev_date: NaiveDate) -> NaiveDate {
-        
-        calculate_next_date(
-            prev_date,
-            self.period,
-            self.frequency,
-            self.start_date,
-        )
+        calculate_next_date(prev_date, self.period, self.frequency, self.start_date)
     }
 }
 
@@ -164,25 +165,36 @@ mod tests {
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
-    use super::{Schedule, ScheduleEnum, ScheduleEntry, Modifier, calculate_next_date};
-    
-    use crate::account::{Side};
-    use crate::schedule::{DECIMAL_PRECISION, ScheduleModifier};
+    use super::{calculate_next_date, Modifier, Schedule, ScheduleEntry, ScheduleEnum};
 
-    
+    use crate::account::Side;
+    use crate::schedule::{ScheduleModifier, DECIMAL_PRECISION};
+
     #[test]
     fn test_daily() {
-        test_get_next(ScheduleEnum::Days, 3, NaiveDate::from_ymd_opt(2022, 3, 14).unwrap())
+        test_get_next(
+            ScheduleEnum::Days,
+            3,
+            NaiveDate::from_ymd_opt(2022, 3, 14).unwrap(),
+        )
     }
 
     #[test]
     fn test_weekly() {
-        test_get_next(ScheduleEnum::Weeks, 3, NaiveDate::from_ymd_opt(2022, 4, 1).unwrap())
+        test_get_next(
+            ScheduleEnum::Weeks,
+            3,
+            NaiveDate::from_ymd_opt(2022, 4, 1).unwrap(),
+        )
     }
 
     #[test]
     fn test_monthly() {
-        test_get_next(ScheduleEnum::Months, 3, NaiveDate::from_ymd_opt(2022, 6, 11).unwrap())
+        test_get_next(
+            ScheduleEnum::Months,
+            3,
+            NaiveDate::from_ymd_opt(2022, 6, 11).unwrap(),
+        )
     }
 
     #[test]
@@ -210,7 +222,11 @@ mod tests {
 
     #[test]
     fn test_yearly() {
-        test_get_next(ScheduleEnum::Years, 1, NaiveDate::from_ymd_opt(2023, 3, 11).unwrap())
+        test_get_next(
+            ScheduleEnum::Years,
+            1,
+            NaiveDate::from_ymd_opt(2023, 3, 11).unwrap(),
+        )
     }
 
     fn build_schedule(
@@ -218,7 +234,6 @@ mod tests {
         period: ScheduleEnum,
         schedule_modifiers: Vec<ScheduleModifier>,
     ) -> Schedule {
-        
         let mut s = Schedule {
             id: Uuid::new_v4(),
             name: "ST 1".to_string(),
@@ -267,20 +282,32 @@ mod tests {
             cycle_count: 0,
         };
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd_opt(2022, 1, 11).unwrap(), modifier);
+        test_get_next_modifier_date(
+            schedule_modifier.clone(),
+            NaiveDate::from_ymd_opt(2022, 1, 11).unwrap(),
+            modifier,
+        );
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
     #[test]
     fn test_yearly_modifier() {
-        let (mut modifier,  schedule_modifier) = build_schedule_modifier(0, dec!(0), dec!(0));
+        let (mut modifier, schedule_modifier) = build_schedule_modifier(0, dec!(0), dec!(0));
         modifier.period = ScheduleEnum::Years;
 
-        test_get_next_modifier_date(schedule_modifier.clone(), NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), modifier);
+        test_get_next_modifier_date(
+            schedule_modifier.clone(),
+            NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
+            modifier,
+        );
         assert_eq!(0, schedule_modifier.cycle_count);
     }
 
-    fn test_get_next_modifier_date(schedule_modifier: ScheduleModifier, expected_date: NaiveDate, modifier: Modifier) {
+    fn test_get_next_modifier_date(
+        schedule_modifier: ScheduleModifier,
+        expected_date: NaiveDate,
+        modifier: Modifier,
+    ) {
         let next_date = schedule_modifier.get_next_date(&modifier);
         assert_eq!(expected_date, next_date);
     }
@@ -348,7 +375,7 @@ mod tests {
     // Modifier.apply tests
     #[test]
     fn test_modifier_apply_no_cycles() {
-        let m = build_modifier(dec!(5), dec!(0.10));        
+        let m = build_modifier(dec!(5), dec!(0.10));
         assert_eq!(dec!(100), m.apply(dec!(100), 0));
     }
 
@@ -379,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_modifier_apply_many_cycles() {
-        let m = build_modifier(dec!(2), dec!(0.05));        
+        let m = build_modifier(dec!(2), dec!(0.05));
         // iterative expected calculation
         let mut expected = dec!(100);
         for _ in 0..5 {
@@ -395,14 +422,21 @@ mod tests {
         assert_eq!(dec!(88), m.apply(dec!(100), 3));
     }
 
-    fn build_schedule_modifier(cycle_count: i64, amount: Decimal, percentage: Decimal) -> (Modifier, ScheduleModifier) {
+    fn build_schedule_modifier(
+        cycle_count: i64,
+        amount: Decimal,
+        percentage: Decimal,
+    ) -> (Modifier, ScheduleModifier) {
         let m = build_modifier(amount, percentage);
         let modifier_id = m.id.clone();
-        (m, ScheduleModifier {
-            modifier_id,
-            last_date: None,
-            cycle_count,
-        })
+        (
+            m,
+            ScheduleModifier {
+                modifier_id,
+                last_date: None,
+                cycle_count,
+            },
+        )
     }
 
     fn build_modifier(amount: Decimal, percentage: Decimal) -> Modifier {

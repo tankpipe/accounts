@@ -1,16 +1,20 @@
 #![allow(dead_code)]
-use std::{path::{Path, PathBuf}, fs::File, io::Read};
-use std::{fs, io};
+use crate::books_error;
+use fs2::FileExt;
+use rust_decimal::Decimal;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
-use fs2::FileExt;
-use serde_json::Value;
-use crate::books_error;
-use rust_decimal::Decimal;
+use std::{fs, io};
+use std::{
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
+use crate::account::{Side, Transaction};
 use crate::books::{Books, BooksError};
-use crate::account::{Transaction, Side};
 use crate::books_prev_versions::{BooksV004, BooksV005};
 use uuid::Uuid;
 
@@ -23,7 +27,7 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
         Err(why) => {
             println!("Open file failed : {:?}", why.kind());
             Err(why)
-        },
+        }
         Ok(mut file) => {
             let mut content: String = String::new();
             file.read_to_string(&mut content)?;
@@ -31,30 +35,35 @@ pub fn load_books<P: AsRef<Path>>(path: P) -> Result<Books, io::Error> {
                 Err(why) => {
                     println!("Parsing file json failed : {:?}", why);
                     let v: Value = serde_json::from_str(&mut content)?;
-                    println!(">>>>>>>>>>>>>>> File details: {} {} {}", v["id"], v["name"], v["version"]);
-                    
+                    println!(
+                        ">>>>>>>>>>>>>>> File details: {} {} {}",
+                        v["id"], v["name"], v["version"]
+                    );
+
                     match v["version"].as_str() {
                         Some("0.0.6") => {
-                            return Err(io::Error::new(io::ErrorKind::InvalidData, why));                            
-                        },
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, why));
+                        }
                         Some("0.0.5") => {
-                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], VERSION);
-                            return load_previous_version_0_0_5(content)
-                        },
+                            println!(
+                                ">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}",
+                                v["name"], v["version"], VERSION
+                            );
+                            return load_previous_version_0_0_5(content);
+                        }
                         _ => {
-                            println!(">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}", v["name"], v["version"], VERSION);
-                            return load_previous_version_0_0_4(content)
-                        },
-
+                            println!(
+                                ">>>>>>>>>>>>>>> Attempting to upgrade file {} from {} to {}",
+                                v["name"], v["version"], VERSION
+                            );
+                            return load_previous_version_0_0_4(content);
+                        }
                     }
-                },
-                Ok(books) => {
-                    return Ok(books)
                 }
+                Ok(books) => return Ok(books),
             }
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,10 +244,7 @@ pub fn export_to_csv<P: AsRef<Path>>(
                 .reconciled_status
                 .map(|s| format!("{:?}", s))
                 .unwrap_or_default();
-            let balance = entry
-                .balance
-                .map(format_decimal_2)
-                .unwrap_or_default();
+            let balance = entry.balance.map(format_decimal_2).unwrap_or_default();
 
             let fields = [
                 entry.date.format("%Y-%m-%d").to_string(),
@@ -270,12 +276,9 @@ pub fn export_to_csv<P: AsRef<Path>>(
 
 pub fn export_accounts_to_csv<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let mut csv = String::new();
-    csv.push_str(
-        "account_id,name,account_type,starting_balance\n"
-    );
+    csv.push_str("account_id,name,account_type,starting_balance\n");
 
     for account in books.accounts() {
-
         let fields = [
             account.id.to_string(),
             account.name,
@@ -298,7 +301,8 @@ pub fn export_accounts_to_csv<P: AsRef<Path>>(path: P, books: &Books) -> io::Res
 }
 
 fn escape_csv_field(value: &str) -> String {
-    let needs_quotes = value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r');
+    let needs_quotes =
+        value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r');
     if !needs_quotes {
         return value.to_string();
     }
@@ -326,47 +330,53 @@ pub fn file_exists<P: AsRef<Path>>(path: P) -> bool {
 pub fn delete_file<P: AsRef<Path>>(path: P) -> Result<(), BooksError> {
     match fs::remove_file(&path) {
         Ok(_) => Ok(()),
-        Err(e) => Err(books_error!("errors.file_delete_error", path => format!("{:?}", path.as_ref()), error => format!("{:?}", e)))
+        Err(e) => Err(
+            books_error!("errors.file_delete_error", path => format!("{:?}", path.as_ref()), error => format!("{:?}", e)),
+        ),
     }
 }
 
-pub fn save_new_books<P: AsRef<Path>>(path: P, books: &Books) ->  Result<(), BooksError>{
-    let file_result = &File::options()
-            .write(true)
-            .create_new(true)
-            .open(&path);
+pub fn save_new_books<P: AsRef<Path>>(path: P, books: &Books) -> Result<(), BooksError> {
+    let file_result = &File::options().write(true).create_new(true).open(&path);
 
     match file_result {
         Ok(file) => {
             _ = ::serde_json::to_writer(file, &books);
             Ok(())
-        },
+        }
         Err(e) => {
-            println!("Error creating file. Path: {:?} Error: {:?}", path.as_ref(), e);
-            match e.kind() {            
-            io::ErrorKind::AlreadyExists => Err(books_error!("errors.file_already_exists")),
-            _ => Err(books_error!("errors.file_create_error", error => format!("{:?}", e)))
+            println!(
+                "Error creating file. Path: {:?} Error: {:?}",
+                path.as_ref(),
+                e
+            );
+            match e.kind() {
+                io::ErrorKind::AlreadyExists => Err(books_error!("errors.file_already_exists")),
+                _ => Err(books_error!("errors.file_create_error", error => format!("{:?}", e))),
             }
         }
     }
-
 }
 
 #[cfg(test)]
 
 mod tests {
-    use std::{fs::File};
-    use std::io::prelude::*;
-    use rust_decimal::Decimal;
-    use uuid::Uuid;
-    use chrono::{NaiveDate};
-    use rust_decimal_macros::dec;
+    use super::{load_books, Books};
     use crate::interest::{Interest, InterestTerms, InterestType};
-    use crate::{account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus}, books_repo::{export_to_csv, save_books}, schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum}};
+    use crate::{
+        account::{Account, AccountType, Entry, Side, Transaction, TransactionStatus},
+        books_repo::{export_to_csv, save_books},
+        schedule::{Modifier, Schedule, ScheduleEntry, ScheduleEnum},
+    };
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
+    use std::fs::File;
+    use std::io::prelude::*;
     use tempfile::NamedTempFile;
-    use super::{Books, load_books};
+    use uuid::Uuid;
 
-   fn build_books() -> Books {
+    fn build_books() -> Books {
         let mut books = Books::build_empty("My Books");
         let dr_account1 = Account::create_new("Savings Account 1", AccountType::Asset);
         let id1: Uuid = dr_account1.id;
@@ -382,7 +392,7 @@ mod tests {
         let t2 = build_transaction(id2, id1, "Gave some moneys back", t2_date, dec!(98.99));
         books.add_transaction(t2).unwrap();
         let s_id_1 = Uuid::new_v4();
-        let st = Schedule{
+        let st = Schedule {
             id: s_id_1,
             name: "Some income".to_string(),
             period: ScheduleEnum::Months,
@@ -404,9 +414,9 @@ mod tests {
                     account_id: id2,
                     entry_type: Side::Credit,
                     schedule_id: s_id_1,
-                }
+                },
             ],
-            schedule_modifiers: vec![]
+            schedule_modifiers: vec![],
         };
         let _ = books.add_schedule(st);
         let m = Modifier {
@@ -422,7 +432,7 @@ mod tests {
         let _ = books.add_modifier(m);
         let interest_terms = InterestTerms::simple(
             date,
-            Decimal::new(5, 2),            
+            Decimal::new(5, 2),
             InterestType::Daily,
             ScheduleEnum::Months,
             1,
@@ -430,29 +440,53 @@ mod tests {
             "Monthly interest".to_string(),
             None,
         );
-        let _ = books.add_interest(Interest::from_components(vec![interest_terms], id1));   
+        let _ = books.add_interest(Interest::from_components(vec![interest_terms], id1));
         books
-   }
+    }
 
-    fn build_transaction(dr_account_id: Uuid, cr_account_id: Uuid, description_str: &str, date: NaiveDate, amount: Decimal) -> Transaction {
+    fn build_transaction(
+        dr_account_id: Uuid,
+        cr_account_id: Uuid,
+        description_str: &str,
+        date: NaiveDate,
+        amount: Decimal,
+    ) -> Transaction {
         let transaction_id = Uuid::new_v4();
         let description = description_str;
-        let t1 = Transaction{
-                id: transaction_id,
-                entries: vec![
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:dr_account_id,entry_type:Side::Debit,
-                        amount,balance:None, reconciled_status: None },
-                    Entry{id:Uuid::new_v4(),transaction_id,date,description:description.to_string(),account_id:cr_account_id,entry_type:Side::Credit,
-                        amount,balance:None, reconciled_status: None},
-                ],
-                status: TransactionStatus::Recorded,
-                source_type: None,
-                source_id: None,
-            };
+        let t1 = Transaction {
+            id: transaction_id,
+            entries: vec![
+                Entry {
+                    id: Uuid::new_v4(),
+                    transaction_id,
+                    date,
+                    description: description.to_string(),
+                    account_id: dr_account_id,
+                    entry_type: Side::Debit,
+                    amount,
+                    balance: None,
+                    reconciled_status: None,
+                },
+                Entry {
+                    id: Uuid::new_v4(),
+                    transaction_id,
+                    date,
+                    description: description.to_string(),
+                    account_id: cr_account_id,
+                    entry_type: Side::Credit,
+                    amount,
+                    balance: None,
+                    reconciled_status: None,
+                },
+            ],
+            status: TransactionStatus::Recorded,
+            source_type: None,
+            source_id: None,
+        };
         t1
     }
-   #[test]
-   fn test_load_books() {
+    #[test]
+    fn test_load_books() {
         let books = build_books();
         let tmp_file = NamedTempFile::new().expect("create temp file");
         let filepath = tmp_file.path();
@@ -463,7 +497,7 @@ mod tests {
         match File::open(filepath) {
             Err(why) => {
                 println!("Open file failed 2: {:?}", why.kind());
-            },
+            }
             Ok(mut file) => {
                 let mut content: String = String::new();
                 file.read_to_string(&mut content).unwrap();
@@ -481,7 +515,7 @@ mod tests {
     }
 
     #[test]
-   fn test_load_books_v0_0_4() {
+    fn test_load_books_v0_0_4() {
         let filepath = "src/previous_versions/books_v0.0.4.json";
 
         let result = load_books(filepath);
@@ -490,11 +524,10 @@ mod tests {
         assert_eq!(1, books.schedules().len());
         assert_eq!(2, books.transactions().len());
         assert_eq!(0, books.modifiers().len());
-        
     }
-    
+
     #[test]
-   fn test_load_books_v0_0_5() {
+    fn test_load_books_v0_0_5() {
         let filepath = "src/previous_versions/books_v0.0.5.json";
 
         let result = load_books(filepath);
@@ -502,8 +535,8 @@ mod tests {
         assert_eq!(2, books.accounts().len());
         assert_eq!(1, books.schedules().len());
         assert_eq!(2, books.transactions().len());
-        assert_eq!(1, books.modifiers().len());        
-        assert_eq!(0, books.interests().len());        
+        assert_eq!(1, books.modifiers().len());
+        assert_eq!(0, books.interests().len());
     }
 
     #[test]
@@ -532,8 +565,18 @@ mod tests {
 
         let rows: Vec<&str> = lines.filter(|line| !line.trim().is_empty()).collect();
         assert_eq!(4, rows.len());
-        assert_eq!(2, rows.iter().filter(|row| row.contains("received moneys")).count());
-        assert_eq!(2, rows.iter().filter(|row| row.contains("Gave some moneys back")).count());
+        assert_eq!(
+            2,
+            rows.iter()
+                .filter(|row| row.contains("received moneys"))
+                .count()
+        );
+        assert_eq!(
+            2,
+            rows.iter()
+                .filter(|row| row.contains("Gave some moneys back"))
+                .count()
+        );
         assert!(rows.iter().any(|row| row.contains(",Savings Account 1,")));
         assert!(rows.iter().any(|row| row.contains(",Credit Account 1,")));
     }
