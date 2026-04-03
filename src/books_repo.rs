@@ -134,8 +134,6 @@ pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     let lock_path = parent.join(format!("{}.lock", file_name.to_string_lossy()));
     let mut temp_path = unique_temp_path(parent, file_name);
 
-    println!(">>>>>>>>>>>>>>>> Saving Books <<<<<<<<<<<<<<<<");
-
     let lock_file = File::options()
         .read(true)
         .write(true)
@@ -175,10 +173,9 @@ pub fn save_books<P: AsRef<Path>>(path: P, books: &Books) -> io::Result<()> {
     }
 
     let unlock_result = lock_file.unlock();
+    println!("Saved Books: {}", path.display());
     write_result?;
     unlock_result?;
-
-    println!(">>>>>>>>>>>>>>>> Saved Books  <<<<<<<<<<<<<<<<");
     Ok(())
 }
 

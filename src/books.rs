@@ -545,10 +545,6 @@ impl Books {
         status: Option<TransactionStatus>,
         from: Option<NaiveDate>,
     ) -> Vec<Transaction> {
-        print!(
-            "transactions_by_interest called with interest_id: {}, status: {:?}, from: {:?}",
-            interest_id, status, from
-        );
         self.transactions
             .iter()
             .filter(|t| t.source_type == Some(Source::Interest) && t.source_id == Some(interest_id))
