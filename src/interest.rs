@@ -300,7 +300,7 @@ pub fn calculate_interest_for_accounts(
         };
 
         let mut start_date = match last_recorded_before_earliest {
-            Some(date) => date.checked_add_days(Days::new(1)).unwrap(),
+            Some(date) => date,
             None => first_term_start,
         };
 
@@ -425,7 +425,7 @@ pub fn calculate_interest_for_accounts(
                         .or_insert(dec!(0));
                     let new_total = *current_balance + interest_amount;
                     *current_balance = new_total;
-                    //println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
+                    println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
                 }
             }
 
