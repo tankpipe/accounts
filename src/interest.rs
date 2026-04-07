@@ -425,7 +425,7 @@ pub fn calculate_interest_for_accounts(
                         .or_insert(dec!(0));
                     let new_total = *current_balance + interest_amount;
                     *current_balance = new_total;
-                    println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
+                    //println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
                 }
             }
 
