@@ -21,6 +21,7 @@ use crate::serializer::{deserialize_option_naivedate, serialize_option_naivedate
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_PROJECTION_MONTHS: u32 = 12;
+pub const MAX_PROJECTION_MONTHS: u32 = 1200;
 
 /// Configuration for this books instance.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
