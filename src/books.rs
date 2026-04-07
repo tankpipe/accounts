@@ -17,12 +17,21 @@ use crate::reconcile::{
 };
 use crate::schedule::{Modifier, Schedule};
 use crate::scheduler::Scheduler;
+use crate::serializer::{deserialize_option_naivedate, serialize_option_naivedate};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const DEFAULT_PROJECTION_MONTHS: u32 = 12;
 
+/// Configuration for this books instance.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub require_double_entry: bool,
+    #[serde(default = "default_projection_months")]
+    pub projection_months: u32,
+    #[serde(default)]
+    #[serde(serialize_with = "serialize_option_naivedate")]
+    #[serde(deserialize_with = "deserialize_option_naivedate")]
+    pub projected_to: Option<NaiveDate>,
 }
 
 /// Book of accounts a.k.a The Books.
@@ -82,6 +91,8 @@ impl Books {
             interests: HashMap::new(),
             settings: Settings {
                 require_double_entry: false,
+                projection_months: DEFAULT_PROJECTION_MONTHS,
+                projected_to: None,
             },
             recalculate_interest: HashSet::new(),
         }
@@ -1129,8 +1140,9 @@ impl Books {
         }
     }
 
-    pub fn recalculate_interest(&mut self, projection_date: NaiveDate) -> Result<(), BooksError> {
-        println!("Calculating interest...");
+    pub fn recalculate_interest(&mut self) -> Result<(), BooksError> {
+       let projection_date = self.get_projection_date();
+        println!("Calculating interest to {}...", projection_date);
         let interest_accounts = self
             .accounts()
             .into_iter()
@@ -1149,7 +1161,8 @@ impl Books {
         !self.recalculate_interest.is_empty()
     }
 
-    pub fn run_checks_and_update(&mut self, projection_date: NaiveDate) -> Result<(), BooksError> {
+    pub fn run_checks_and_update(&mut self) -> Result<(), BooksError> {
+        let projection_date = self.get_projection_date();
         println!("Running checks 📋  Projection date: {}", projection_date);
         println!("Generating schedules...");
         self.generate(projection_date);
@@ -1161,9 +1174,22 @@ impl Books {
             .collect();
         println!("Calculating interest...");
         calculate_interest_for_accounts(self, interest_accounts, projection_date)?;
+        self.settings.projected_to = Some(projection_date);
         println!("Checks completed ✅");
         Ok(())
     }
+
+    fn get_projection_date(&mut self) -> NaiveDate {
+        let today = chrono::Utc::now().date_naive();
+        let projection_date = today
+            .checked_add_months(chrono::Months::new(self.settings.projection_months))
+            .unwrap();
+        projection_date
+    }
+}
+
+fn default_projection_months() -> u32 {
+    DEFAULT_PROJECTION_MONTHS
 }
 
 struct MatchCandidate {
