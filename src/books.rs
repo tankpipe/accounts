@@ -748,10 +748,34 @@ impl Books {
             .collect();
         let mut matched_indices: HashSet<usize> = HashSet::new();
 
-        let mut results: Vec<ReconciliationItem> =
-            Vec::with_capacity(input_txns.len() + existing_txns.len());
+        // Process rows with strongest potential linkage first so weak candidates
+        // do not consume targets needed by stronger exact matches later.
+        let empty_matches: HashSet<usize> = HashSet::new();
+        let input_priorities: Vec<Option<MatchPriority>> = input_txns
+            .iter()
+            .map(|input| {
+                let entry = input
+                    .find_entry_by_account(&account_id)
+                    .expect("transaction involves account");
+                select_best_candidate(entry, &existing_targets, &empty_matches)
+                    .map(|(_, _, candidate)| MatchPriority::from_candidate(&candidate))
+            })
+            .collect();
+        let mut input_match_order: Vec<usize> = (0..input_txns.len()).collect();
+        input_match_order.sort_by(|a_idx, b_idx| {
+            match (input_priorities[*a_idx], input_priorities[*b_idx]) {
+                (Some(a), Some(b)) => cmp_match_priority(b, a).then_with(|| a_idx.cmp(b_idx)),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => a_idx.cmp(b_idx),
+            }
+        });
 
-        for input in input_txns.iter() {
+        let mut reconciliation_results: Vec<Option<ReconciliationItem>> =
+            vec![None; input_txns.len()];
+
+        for input_idx in input_match_order {
+            let input = &input_txns[input_idx];
             // 3) Extract the account entry details from the input transaction.
             let entry = input
                 .find_entry_by_account(&account_id)
@@ -759,35 +783,7 @@ impl Books {
             let expected_balance = entry.balance;
 
             // 4) Score candidate matches inline and choose the highest-confidence eligible target.
-            let mut best_candidate: Option<(usize, Uuid, MatchCandidate)> = None;
-            for (target_idx, target_txn_id, target_entry) in existing_targets.iter() {
-                if matched_indices.contains(target_idx) {
-                    continue;
-                }
-
-                if let Some(candidate) = evaluate_match_candidate(entry, target_entry) {
-                    match &best_candidate {
-                        None => {
-                            best_candidate = Some((*target_idx, *target_txn_id, candidate));
-                        }
-                        Some((_, _, best_candidate_match)) => {
-                            let better_status = status_rank(&candidate.status)
-                                > status_rank(&best_candidate_match.status);
-                            let same_status = status_rank(&candidate.status)
-                                == status_rank(&best_candidate_match.status);
-                            if candidate.confidence > best_candidate_match.confidence
-                                || (candidate.confidence == best_candidate_match.confidence
-                                    && better_status)
-                                || (candidate.confidence == best_candidate_match.confidence
-                                    && same_status
-                                    && candidate.status == ReconciliationMatchStatus::Matched)
-                            {
-                                best_candidate = Some((*target_idx, *target_txn_id, candidate));
-                            }
-                        }
-                    }
-                }
-            }
+            let best_candidate = select_best_candidate(entry, &existing_targets, &matched_indices);
 
             let (status, matched_id, confidence, signals) =
                 if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
@@ -815,7 +811,8 @@ impl Books {
                 };
 
             // 5) Record this input transaction's reconciliation outcome.
-            results.push(ReconciliationItem::Reconciliation(ReconciliationResult {
+            reconciliation_results[input_idx] =
+                Some(ReconciliationItem::Reconciliation(ReconciliationResult {
                 transaction: input.clone(),
                 status,
                 balance: expected_balance,
@@ -824,6 +821,10 @@ impl Books {
                 signals,
             }));
         }
+        let results: Vec<ReconciliationItem> = reconciliation_results
+            .into_iter()
+            .map(|item| item.expect("reconciliation result generated for each input row"))
+            .collect();
 
         // 6) Add existing transactions to results, splicing matched reconciliation transactions immediately after their targets
         let mut final_results: Vec<ReconciliationItem> =
@@ -1196,6 +1197,10 @@ fn default_projection_months() -> u32 {
 struct MatchCandidate {
     status: ReconciliationMatchStatus,
     confidence: f32,
+    amount_variance: f32,
+    description_variance: f32,
+    date_days: f32,
+    balance_variance: Option<f32>,
     signals: Vec<Signal>,
 }
 
@@ -1230,15 +1235,18 @@ fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<M
         return None;
     }
 
-    let exact_match = variances.amount == 0.0
+    let exact_identity_match = variances.amount == 0.0
         && variances.side == 0.0
-        && variances.date_days == 0.0
-        //&& variances.description <= 0.01
-        && variances.balance.unwrap_or(0.0) == 0.0;
+        && variances.date_days <= 1.0
+        && variances.description <= 0.01;
+    let exact_balance_match = variances.balance.unwrap_or(0.0) == 0.0;
+    let exact_match = exact_identity_match && variances.date_days == 0.0 && exact_balance_match;
 
-    // Hard rule: when balance is present and materially off, never return PartialMatch.
+    // Balance drift should not overrule a clear identity match (amount+description+side+close date).
     let status = if exact_match {
         ReconciliationMatchStatus::Matched
+    } else if exact_identity_match {
+        ReconciliationMatchStatus::PartialMatch
     } else if variances.balance.is_some_and(|b| b > 0.0) {
         if confidence >= 0.45 {
             ReconciliationMatchStatus::Mismatch
@@ -1266,6 +1274,10 @@ fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<M
     Some(MatchCandidate {
         status,
         confidence: clamp_reconciliation_confidence(confidence),
+        amount_variance: variances.amount,
+        description_variance: variances.description,
+        date_days: variances.date_days,
+        balance_variance: variances.balance,
         signals,
     })
 }
@@ -1455,6 +1467,106 @@ fn status_rank(status: &ReconciliationMatchStatus) -> u8 {
         ReconciliationMatchStatus::Mismatch => 1,
         ReconciliationMatchStatus::Unmatched => 0,
     }
+}
+
+#[derive(Clone, Copy)]
+struct MatchPriority {
+    status_rank: u8,
+    amount_variance: f32,
+    description_variance: f32,
+    date_days: f32,
+    confidence: f32,
+    balance_variance: Option<f32>,
+}
+
+impl MatchPriority {
+    fn from_candidate(candidate: &MatchCandidate) -> Self {
+        Self {
+            status_rank: status_rank(&candidate.status),
+            amount_variance: candidate.amount_variance,
+            description_variance: candidate.description_variance,
+            date_days: candidate.date_days,
+            confidence: candidate.confidence,
+            balance_variance: candidate.balance_variance,
+        }
+    }
+}
+
+fn cmp_match_priority(a: MatchPriority, b: MatchPriority) -> Ordering {
+    const EPSILON: f32 = 0.0001;
+
+    let cmp_f32 =
+        |left: f32, right: f32, low_is_better: bool| -> Option<Ordering> {
+            if (left - right).abs() <= EPSILON {
+                None
+            } else if low_is_better {
+                if left < right {
+                    Some(Ordering::Greater)
+                } else {
+                    Some(Ordering::Less)
+                }
+            } else if left > right {
+                Some(Ordering::Greater)
+            } else {
+                Some(Ordering::Less)
+            }
+        };
+
+    a.status_rank
+        .cmp(&b.status_rank)
+        .then_with(|| {
+            cmp_f32(a.amount_variance, b.amount_variance, true).unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| {
+            cmp_f32(
+                a.description_variance,
+                b.description_variance,
+                true,
+            )
+            .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| cmp_f32(a.date_days, b.date_days, true).unwrap_or(Ordering::Equal))
+        .then_with(|| cmp_f32(a.confidence, b.confidence, false).unwrap_or(Ordering::Equal))
+        .then_with(|| match (a.balance_variance, b.balance_variance) {
+            (Some(av), Some(bv)) => cmp_f32(av, bv, true).unwrap_or(Ordering::Equal),
+            _ => Ordering::Equal,
+        })
+}
+
+fn is_candidate_better(candidate: &MatchCandidate, best: &MatchCandidate) -> bool {
+    cmp_match_priority(
+        MatchPriority::from_candidate(candidate),
+        MatchPriority::from_candidate(best),
+    ) == Ordering::Greater
+}
+
+fn select_best_candidate(
+    rec_entry: &Entry,
+    existing_targets: &[(usize, Uuid, Entry)],
+    matched_indices: &HashSet<usize>,
+) -> Option<(usize, Uuid, MatchCandidate)> {
+    let mut best_candidate: Option<(usize, Uuid, MatchCandidate)> = None;
+
+    for (target_idx, target_txn_id, target_entry) in existing_targets.iter() {
+        if matched_indices.contains(target_idx) {
+            continue;
+        }
+
+        if let Some(candidate) = evaluate_match_candidate(rec_entry, target_entry) {
+            match &best_candidate {
+                None => {
+                    best_candidate = Some((*target_idx, *target_txn_id, candidate));
+                }
+                Some((_, _, best_candidate_match)) => {
+                    if is_candidate_better(&candidate, best_candidate_match) {
+                        best_candidate = Some((*target_idx, *target_txn_id, candidate));
+                    }
+                }
+            }
+        }
+    }
+
+    best_candidate
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

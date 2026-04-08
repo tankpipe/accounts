@@ -1011,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reconcile_mismatch_balance() {
+    fn test_reconcile_partial_match_when_identity_matches_but_balance_drifts() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(
             Some(id1),
@@ -1036,14 +1036,14 @@ mod tests {
         assert_eq!(2, results.len());
         match &results[0] {
             ReconciliationItem::Original(target) => {
-                assert_eq!(target.status, ReconciliationMatchStatus::Mismatch);
+                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
                 assert_eq!(target.matched_reconciliation_id, Some(statement_t1_id));
             }
             _ => panic!("expected original transaction"),
         }
         match &results[1] {
             ReconciliationItem::Reconciliation(recon) => {
-                assert_eq!(recon.status, ReconciliationMatchStatus::Mismatch);
+                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
                 assert_eq!(recon.matched_transaction_id, Some(t1.id));
             }
             _ => panic!("expected reconciliation transaction"),
@@ -1376,6 +1376,207 @@ mod tests {
             .expect("AMAZON.COM SEATTLE row should exist");
 
         assert_eq!(amazon_statement.matched_transaction_id, Some(amazon_txn.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_prefers_identity_match_over_date_exact_balance_match() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_exact = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            "CITY RATES 500000000418111",
+            dec!(550.80),
+            None,
+        );
+        let target_high_confidence_mismatch = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+            "CITY RATES 500000000418145",
+            dec!(550.80),
+            None,
+        );
+
+        books.add_transaction(target_exact.clone()).unwrap();
+        books
+            .add_transaction(target_high_confidence_mismatch.clone())
+            .unwrap();
+
+        let statement_row = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            "CITY RATES 500000000418145",
+            dec!(550.80),
+            Some(dec!(550.80)),
+        );
+
+        let statement_id = statement_row.id;
+        let results = books
+            .prepare_reconciliation(account_id, vec![statement_row])
+            .unwrap();
+
+        let statement_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == statement_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("statement row should exist");
+
+        assert_eq!(statement_result.status, ReconciliationMatchStatus::PartialMatch);
+        assert_eq!(
+            statement_result.matched_transaction_id,
+            Some(target_high_confidence_mismatch.id)
+        );
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_stronger_later_row_claims_target_first() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            "DIRECT DEBIT BRISBANE CITY CO 500000000418145",
+            dec!(550.80),
+            None,
+        );
+        books.add_transaction(target.clone()).unwrap();
+
+        let weak_first_row = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+            "DIRECT DEBIT BRISBANE CITY CO 500000000418137",
+            dec!(560.80),
+            Some(dec!(560.80)),
+        );
+        let exact_second_row = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+            "DIRECT DEBIT BRISBANE CITY CO 500000000418145",
+            dec!(550.80),
+            Some(dec!(550.80)),
+        );
+        let exact_second_row_id = exact_second_row.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![weak_first_row, exact_second_row])
+            .unwrap();
+
+        let exact_row_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == exact_second_row_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("exact statement row should exist");
+
+        assert_eq!(exact_row_result.matched_transaction_id, Some(target.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_does_not_swap_similar_rows_due_to_balance() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let unit1 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887",
+            dec!(342.75),
+            None,
+        );
+        let unit2 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167119",
+            dec!(345.98),
+            None,
+        );
+        let unit3 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257",
+            dec!(376.80),
+            None,
+        );
+        let unit4 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167344",
+            dec!(349.54),
+            None,
+        );
+
+        books.add_transaction(unit1.clone()).unwrap();
+        books.add_transaction(unit2.clone()).unwrap();
+        books.add_transaction(unit3.clone()).unwrap();
+        books.add_transaction(unit4.clone()).unwrap();
+
+        // Crossed balances can otherwise encourage a suboptimal swap between unit2 and unit4.
+        let recon1 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887",
+            dec!(342.75),
+            Some(dec!(342.75)),
+        );
+        let recon2 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167344",
+            dec!(349.54),
+            Some(dec!(688.73)),
+        );
+        let recon3 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257",
+            dec!(376.80),
+            Some(dec!(1065.53)),
+        );
+        let recon4 = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167119",
+            dec!(345.98),
+            Some(dec!(1415.07)),
+        );
+
+        let recon2_id = recon2.id;
+        let recon4_id = recon4.id;
+        let results = books
+            .prepare_reconciliation(account_id, vec![recon1, recon2, recon3, recon4])
+            .unwrap();
+
+        let recon2_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon2_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon2 row should exist");
+        let recon4_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon4_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon4 row should exist");
+
+        assert_eq!(recon2_result.matched_transaction_id, Some(unit4.id));
+        assert_eq!(recon4_result.matched_transaction_id, Some(unit2.id));
     }
 
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {
