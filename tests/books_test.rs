@@ -1579,6 +1579,77 @@ mod tests {
         assert_eq!(recon4_result.matched_transaction_id, Some(unit2.id));
     }
 
+    #[test]
+    fn test_prepare_reconciliation_same_day_out_of_order_set_promotes_to_matched() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887 REFERENCE NUMBER 11448552",
+            dec!(342.75),
+            None,
+        );
+        let target_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257 REFERENCE NUMBER 11437552",
+            dec!(376.80),
+            None,
+        );
+        books.add_transaction(target_a.clone()).unwrap();
+        books.add_transaction(target_b.clone()).unwrap();
+
+        // Reversed order and balances that do not match the book running balance.
+        // Individually these are PartialMatch, but as a same-day set they are exact identities.
+        let recon_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257 REFERENCE NUMBER 11437552",
+            dec!(376.80),
+            Some(dec!(33615.29)),
+        );
+        let recon_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887 REFERENCE NUMBER 11448552",
+            dec!(342.75),
+            Some(dec!(33272.54)),
+        );
+        let recon_a_id = recon_a.id;
+        let recon_b_id = recon_b.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![recon_b, recon_a])
+            .unwrap();
+
+        let recon_a_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_a_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_a row should exist");
+        let recon_b_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_b_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_b row should exist");
+
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
+        assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
+    }
+
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {
         let new_id = Uuid::new_v4();
         Transaction {

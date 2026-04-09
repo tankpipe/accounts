@@ -747,6 +747,12 @@ impl Books {
             })
             .collect();
         let mut matched_indices: HashSet<usize> = HashSet::new();
+        let preselected_same_day_matches = select_same_day_set_matches(
+            &input_txns,
+            account_id,
+            &existing_targets,
+            &mut matched_indices,
+        );
 
         // Process rows with strongest potential linkage first so weak candidates
         // do not consume targets needed by stronger exact matches later.
@@ -783,7 +789,23 @@ impl Books {
             let expected_balance = entry.balance;
 
             // 4) Score candidate matches inline and choose the highest-confidence eligible target.
-            let best_candidate = select_best_candidate(entry, &existing_targets, &matched_indices);
+            let best_candidate = preselected_same_day_matches
+                .get(&input_idx)
+                .map(|selected| {
+                    let mut candidate = selected.candidate.clone();
+                    if selected.promote_to_matched
+                        && candidate.status != ReconciliationMatchStatus::Matched
+                    {
+                        candidate.confidence = adjust_confidence_for_status(
+                            candidate.confidence,
+                            candidate.status,
+                            ReconciliationMatchStatus::Matched,
+                        );
+                        candidate.status = ReconciliationMatchStatus::Matched;
+                    }
+                    (selected.target_idx, selected.target_txn_id, candidate)
+                })
+                .or_else(|| select_best_candidate(entry, &existing_targets, &matched_indices));
 
             let (status, matched_id, confidence, signals) =
                 if let Some((match_idx, matched_txn_id, candidate)) = best_candidate {
@@ -1194,10 +1216,12 @@ fn default_projection_months() -> u32 {
     DEFAULT_PROJECTION_MONTHS
 }
 
+#[derive(Clone)]
 struct MatchCandidate {
     status: ReconciliationMatchStatus,
     confidence: f32,
     amount_variance: f32,
+    side_variance: f32,
     description_variance: f32,
     date_days: f32,
     balance_variance: Option<f32>,
@@ -1275,6 +1299,7 @@ fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<M
         status,
         confidence: clamp_reconciliation_confidence(confidence),
         amount_variance: variances.amount,
+        side_variance: variances.side,
         description_variance: variances.description,
         date_days: variances.date_days,
         balance_variance: variances.balance,
@@ -1467,6 +1492,205 @@ fn status_rank(status: &ReconciliationMatchStatus) -> u8 {
         ReconciliationMatchStatus::Mismatch => 1,
         ReconciliationMatchStatus::Unmatched => 0,
     }
+}
+
+#[derive(Clone)]
+struct SameDayCandidateOption {
+    input_idx: usize,
+    target_idx: usize,
+    target_txn_id: Uuid,
+    candidate: MatchCandidate,
+    score: i64,
+}
+
+#[derive(Default)]
+struct SameDayAssignmentBest {
+    count: usize,
+    score: i64,
+    picks: Vec<SameDayCandidateOption>,
+}
+
+struct PreselectedSameDayMatch {
+    target_idx: usize,
+    target_txn_id: Uuid,
+    candidate: MatchCandidate,
+    promote_to_matched: bool,
+}
+
+fn score_candidate_for_set_matching(candidate: &MatchCandidate) -> i64 {
+    let amount_score = ((1.0 - candidate.amount_variance).clamp(0.0, 1.0) * 1_000_000.0) as i64;
+    let description_score =
+        ((1.0 - candidate.description_variance).clamp(0.0, 1.0) * 100_000.0) as i64;
+    let date_score = ((14.0 - candidate.date_days).clamp(0.0, 14.0) * 1_000.0) as i64;
+    let confidence_score = (candidate.confidence.clamp(0.0, 1.0) * 1_000.0) as i64;
+    let balance_score = candidate
+        .balance_variance
+        .map(|b| ((1.0 - b).clamp(0.0, 1.0) * 100.0) as i64)
+        .unwrap_or(0);
+    (status_rank(&candidate.status) as i64) * 1_000_000_000
+        + amount_score
+        + description_score
+        + date_score
+        + confidence_score
+        + balance_score
+}
+
+fn is_exact_identity_same_day_candidate(candidate: &MatchCandidate) -> bool {
+    candidate.amount_variance == 0.0
+        && candidate.side_variance == 0.0
+        && candidate.date_days == 0.0
+        && candidate.description_variance <= 0.01
+}
+
+fn search_best_same_day_assignment(
+    ordered_inputs: &[(usize, Vec<SameDayCandidateOption>)],
+    pos: usize,
+    used_targets: &mut HashSet<usize>,
+    current_score: i64,
+    current_picks: &mut Vec<SameDayCandidateOption>,
+    best: &mut SameDayAssignmentBest,
+) {
+    if pos == ordered_inputs.len() {
+        let current_count = current_picks.len();
+        if current_count > best.count || (current_count == best.count && current_score > best.score) {
+            best.count = current_count;
+            best.score = current_score;
+            best.picks = current_picks.clone();
+        }
+        return;
+    }
+
+    // Allow skipping this row if it cannot be confidently assigned in this set.
+    search_best_same_day_assignment(
+        ordered_inputs,
+        pos + 1,
+        used_targets,
+        current_score,
+        current_picks,
+        best,
+    );
+
+    for option in &ordered_inputs[pos].1 {
+        if used_targets.contains(&option.target_idx) {
+            continue;
+        }
+        used_targets.insert(option.target_idx);
+        current_picks.push(option.clone());
+        search_best_same_day_assignment(
+            ordered_inputs,
+            pos + 1,
+            used_targets,
+            current_score + option.score,
+            current_picks,
+            best,
+        );
+        current_picks.pop();
+        used_targets.remove(&option.target_idx);
+    }
+}
+
+fn select_same_day_set_matches(
+    input_txns: &[Transaction],
+    account_id: Uuid,
+    existing_targets: &[(usize, Uuid, Entry)],
+    matched_indices: &mut HashSet<usize>,
+) -> HashMap<usize, PreselectedSameDayMatch> {
+    let mut input_by_date: std::collections::BTreeMap<NaiveDate, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (idx, txn) in input_txns.iter().enumerate() {
+        let entry = txn
+            .find_entry_by_account(&account_id)
+            .expect("transaction involves account");
+        input_by_date.entry(entry.date).or_default().push(idx);
+    }
+
+    let mut selections: HashMap<usize, PreselectedSameDayMatch> = HashMap::new();
+
+    for (date, input_indices) in input_by_date {
+        if input_indices.len() < 2 {
+            continue;
+        }
+
+        let target_for_day: Vec<(usize, Uuid, &Entry)> = existing_targets
+            .iter()
+            .filter(|(target_idx, _, target_entry)| {
+                target_entry.date == date && !matched_indices.contains(target_idx)
+            })
+            .map(|(target_idx, target_txn_id, target_entry)| (*target_idx, *target_txn_id, target_entry))
+            .collect();
+
+        if target_for_day.len() < 2 {
+            continue;
+        }
+
+        let mut options_by_input: Vec<(usize, Vec<SameDayCandidateOption>)> = Vec::new();
+        for input_idx in input_indices.iter().copied() {
+            let input_entry = input_txns[input_idx]
+                .find_entry_by_account(&account_id)
+                .expect("transaction involves account");
+            let mut options: Vec<SameDayCandidateOption> = Vec::new();
+            for (target_idx, target_txn_id, target_entry) in &target_for_day {
+                if let Some(candidate) = evaluate_match_candidate(input_entry, target_entry) {
+                    if status_rank(&candidate.status) < status_rank(&ReconciliationMatchStatus::PartialMatch) {
+                        continue;
+                    }
+                    options.push(SameDayCandidateOption {
+                        input_idx,
+                        target_idx: *target_idx,
+                        target_txn_id: *target_txn_id,
+                        score: score_candidate_for_set_matching(&candidate),
+                        candidate,
+                    });
+                }
+            }
+            if !options.is_empty() {
+                options_by_input.push((input_idx, options));
+            }
+        }
+
+        if options_by_input.len() < 2 {
+            continue;
+        }
+
+        options_by_input.sort_by_key(|(_, options)| options.len());
+        let mut best = SameDayAssignmentBest::default();
+        let mut used_targets: HashSet<usize> = HashSet::new();
+        let mut current_picks: Vec<SameDayCandidateOption> = Vec::new();
+        search_best_same_day_assignment(
+            &options_by_input,
+            0,
+            &mut used_targets,
+            0,
+            &mut current_picks,
+            &mut best,
+        );
+
+        if best.count < 2 {
+            continue;
+        }
+
+        let full_bijection_size = input_indices.len().min(target_for_day.len());
+        let promote_cluster = best.count == full_bijection_size
+            && best
+                .picks
+                .iter()
+                .all(|pick| is_exact_identity_same_day_candidate(&pick.candidate));
+
+        for pick in best.picks {
+            matched_indices.insert(pick.target_idx);
+            selections.insert(
+                pick.input_idx,
+                PreselectedSameDayMatch {
+                    target_idx: pick.target_idx,
+                    target_txn_id: pick.target_txn_id,
+                    candidate: pick.candidate,
+                    promote_to_matched: promote_cluster,
+                },
+            );
+        }
+    }
+
+    selections
 }
 
 #[derive(Clone, Copy)]
