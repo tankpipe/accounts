@@ -1717,42 +1717,28 @@ impl MatchPriority {
 }
 
 fn cmp_match_priority(a: MatchPriority, b: MatchPriority) -> Ordering {
-    const EPSILON: f32 = 0.0001;
-
-    let cmp_f32 =
-        |left: f32, right: f32, low_is_better: bool| -> Option<Ordering> {
-            if (left - right).abs() <= EPSILON {
-                None
-            } else if low_is_better {
-                if left < right {
-                    Some(Ordering::Greater)
-                } else {
-                    Some(Ordering::Less)
-                }
-            } else if left > right {
-                Some(Ordering::Greater)
-            } else {
-                Some(Ordering::Less)
-            }
-        };
+    let cmp_f32 = |left: f32, right: f32, low_is_better: bool| -> Ordering {
+        // `sort_by` requires a total order; float epsilon comparisons can violate
+        // transitivity. Normalize NaN and use total_cmp for deterministic ordering.
+        if low_is_better {
+            let lhs = if left.is_nan() { f32::INFINITY } else { left };
+            let rhs = if right.is_nan() { f32::INFINITY } else { right };
+            rhs.total_cmp(&lhs)
+        } else {
+            let lhs = if left.is_nan() { f32::NEG_INFINITY } else { left };
+            let rhs = if right.is_nan() { f32::NEG_INFINITY } else { right };
+            lhs.total_cmp(&rhs)
+        }
+    };
 
     a.status_rank
         .cmp(&b.status_rank)
-        .then_with(|| {
-            cmp_f32(a.amount_variance, b.amount_variance, true).unwrap_or(Ordering::Equal)
-        })
-        .then_with(|| {
-            cmp_f32(
-                a.description_variance,
-                b.description_variance,
-                true,
-            )
-            .unwrap_or(Ordering::Equal)
-        })
-        .then_with(|| cmp_f32(a.date_days, b.date_days, true).unwrap_or(Ordering::Equal))
-        .then_with(|| cmp_f32(a.confidence, b.confidence, false).unwrap_or(Ordering::Equal))
+        .then_with(|| cmp_f32(a.amount_variance, b.amount_variance, true))
+        .then_with(|| cmp_f32(a.description_variance, b.description_variance, true))
+        .then_with(|| cmp_f32(a.date_days, b.date_days, true))
+        .then_with(|| cmp_f32(a.confidence, b.confidence, false))
         .then_with(|| match (a.balance_variance, b.balance_variance) {
-            (Some(av), Some(bv)) => cmp_f32(av, bv, true).unwrap_or(Ordering::Equal),
+            (Some(av), Some(bv)) => cmp_f32(av, bv, true),
             _ => Ordering::Equal,
         })
 }
