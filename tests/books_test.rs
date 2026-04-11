@@ -1607,6 +1607,75 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
             "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257 REFERENCE NUMBER 11437552",
             dec!(376.80),
+            Some(dec!(342.75)),
+        );
+        let recon_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887 REFERENCE NUMBER 11448552",
+            dec!(342.75),
+            Some(dec!(719.55)),
+        );
+        let recon_a_id = recon_a.id;
+        let recon_b_id = recon_b.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![recon_b, recon_a])
+            .unwrap();
+
+        let recon_a_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_a_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_a row should exist");
+        let recon_b_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_b_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_b row should exist");
+
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
+        assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_same_day_exact_identity_without_balance_support_stays_partial() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037166887 REFERENCE NUMBER 11448552",
+            dec!(342.75),
+            None,
+        );
+        let target_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257 REFERENCE NUMBER 11437552",
+            dec!(376.80),
+            None,
+        );
+        books.add_transaction(target_a.clone()).unwrap();
+        books.add_transaction(target_b.clone()).unwrap();
+
+        let recon_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            "BPAY DEBIT VIA INTERNET Suncorp Insurance 037167257 REFERENCE NUMBER 11437552",
+            dec!(376.80),
             Some(dec!(33615.29)),
         );
         let recon_a = build_single_entry_transaction(
@@ -1644,8 +1713,8 @@ mod tests {
             .next()
             .expect("recon_b row should exist");
 
-        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
-        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::PartialMatch);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::PartialMatch);
         assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
         assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
     }
