@@ -1051,7 +1051,71 @@ mod tests {
     }
 
     #[test]
-    fn test_reconcile_mismatch_promoted_when_balances_realign() {
+    fn test_reconcile_partial_upgrades_to_matched_when_later_direct_match_realigns() {
+        let (mut books, id1, id2) = setup_books();
+        let t1 = build_transaction_with_date(
+            Some(id1),
+            Some(id2),
+            NaiveDate::from_ymd_opt(2022, 6, 4).unwrap(),
+        );
+        let t2 = build_transaction_with_date(
+            None,
+            Some(id2),
+            NaiveDate::from_ymd_opt(2022, 6, 5).unwrap(),
+        );
+        books.add_transaction(t1.clone()).unwrap();
+        books.add_transaction(t2.clone()).unwrap();
+
+        let mut statement_t1 = clone_transaction_for_reconcile(&t1);
+        for e in &mut statement_t1.entries {
+            if e.account_id == id2 {
+                e.balance = Some(dec!(-9000)); // identity match with balance drift -> Partial initially
+                break;
+            }
+        }
+        let mut statement_t2 = clone_transaction_for_reconcile(&t2);
+        for e in &mut statement_t2.entries {
+            if e.account_id == id2 {
+                e.balance = Some(dec!(-20000)); // direct Matched anchor
+                break;
+            }
+        }
+
+        let results = books
+            .prepare_reconciliation(id2, vec![statement_t1, statement_t2])
+            .unwrap();
+
+        assert_eq!(4, results.len());
+        match &results[0] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[1] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(recon.matched_transaction_id, Some(t1.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
+        match &results[2] {
+            ReconciliationItem::Original(target) => {
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
+            }
+            _ => panic!("expected original transaction"),
+        }
+        match &results[3] {
+            ReconciliationItem::Reconciliation(recon) => {
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
+                assert_eq!(recon.matched_transaction_id, Some(t2.id));
+            }
+            _ => panic!("expected reconciliation transaction"),
+        }
+    }
+
+    #[test]
+    fn test_reconcile_earlier_partial_upgrades_when_later_matched_realigns() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(
             Some(id1),
@@ -1088,13 +1152,13 @@ mod tests {
         assert_eq!(4, results.len());
         match &results[0] {
             ReconciliationItem::Original(target) => {
-                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
             }
             _ => panic!("expected original transaction"),
         }
         match &results[1] {
             ReconciliationItem::Reconciliation(recon) => {
-                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
             }
             _ => panic!("expected reconciliation transaction"),
         }

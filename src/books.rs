@@ -978,17 +978,24 @@ impl Books {
             }
         }
 
-        // 7) If balances realign later (and no Unmatched in between), treat earlier Mismatch as PartialMatch.
+        // 7) If balances realign later via a direct Matched row (and no Unmatched in between):
+        // - treat earlier Mismatch as PartialMatch
+        // - upgrade earlier PartialMatch to Matched
         let mut mismatched_indices: Vec<usize> = Vec::new();
+        let mut partial_indices: Vec<usize> = Vec::new();
         for i in 0..final_results.len() {
             match final_results[i].status() {
                 ReconciliationMatchStatus::Unmatched => {
                     mismatched_indices.clear();
+                    partial_indices.clear();
                 }
                 ReconciliationMatchStatus::Mismatch => {
                     mismatched_indices.push(i);
                 }
-                ReconciliationMatchStatus::Matched | ReconciliationMatchStatus::PartialMatch => {
+                ReconciliationMatchStatus::PartialMatch => {
+                    partial_indices.push(i);
+                }
+                ReconciliationMatchStatus::Matched => {
                     for idx in mismatched_indices.drain(..) {
                         final_results[idx].set_status(ReconciliationMatchStatus::PartialMatch);
                         if let ReconciliationItem::Reconciliation(recon) = &mut final_results[idx] {
@@ -996,6 +1003,16 @@ impl Books {
                                 recon.confidence,
                                 ReconciliationMatchStatus::Mismatch,
                                 ReconciliationMatchStatus::PartialMatch,
+                            );
+                        }
+                    }
+                    for idx in partial_indices.drain(..) {
+                        final_results[idx].set_status(ReconciliationMatchStatus::Matched);
+                        if let ReconciliationItem::Reconciliation(recon) = &mut final_results[idx] {
+                            recon.confidence = adjust_confidence_for_status(
+                                recon.confidence,
+                                ReconciliationMatchStatus::PartialMatch,
+                                ReconciliationMatchStatus::Matched,
                             );
                         }
                     }
