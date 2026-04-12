@@ -108,6 +108,10 @@ pub struct TargetResult {
     pub transaction: Transaction,
     pub status: ReconciliationMatchStatus,
     pub matched_reconciliation_id: Option<Uuid>,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default)]
+    pub signals: Vec<Signal>,
 }
 
 pub fn score_reconciliation_items(account_id: Uuid, items: &mut [ReconciliationItem]) {

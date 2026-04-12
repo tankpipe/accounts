@@ -890,6 +890,8 @@ impl Books {
                 transaction: existing_txn.clone(),
                 status,
                 matched_reconciliation_id: None,
+                confidence: 0.0,
+                signals: Vec::new(),
             });
 
             // If there are matches, set the matched_reconciliation_id to the first match's transaction ID
@@ -902,6 +904,8 @@ impl Books {
                             {
                                 target_result.matched_reconciliation_id =
                                     Some(recon_result.transaction.id);
+                                target_result.confidence = recon_result.confidence;
+                                target_result.signals = recon_result.signals.clone();
                             }
                         }
                     }
