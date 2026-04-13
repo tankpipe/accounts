@@ -982,9 +982,21 @@ impl Books {
             }
         }
 
+        let realignment_eligible_reconciliation_ids: HashSet<Uuid> = final_results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon)
+                    if is_balance_only_partial_for_realignment(recon) =>
+                {
+                    Some(recon.transaction.id)
+                }
+                _ => None,
+            })
+            .collect();
+
         // 7) If balances realign later via a direct Matched row (and no Unmatched in between):
         // - treat earlier Mismatch as PartialMatch
-        // - upgrade earlier PartialMatch to Matched
+        // - upgrade earlier balance-only PartialMatch to Matched
         let mut mismatched_indices: Vec<usize> = Vec::new();
         let mut partial_indices: Vec<usize> = Vec::new();
         for i in 0..final_results.len() {
@@ -997,7 +1009,12 @@ impl Books {
                     mismatched_indices.push(i);
                 }
                 ReconciliationMatchStatus::PartialMatch => {
-                    partial_indices.push(i);
+                    if is_realignment_upgrade_candidate_item(
+                        &final_results[i],
+                        &realignment_eligible_reconciliation_ids,
+                    ) {
+                        partial_indices.push(i);
+                    }
                 }
                 ReconciliationMatchStatus::Matched => {
                     for idx in mismatched_indices.drain(..) {
@@ -1283,7 +1300,7 @@ fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<M
     let exact_identity_match = variances.amount == 0.0
         && variances.side == 0.0
         && variances.date_days <= 1.0
-        && variances.description <= 0.01;
+        && variances.description <= 0.5;
     let exact_balance_match = variances.balance.unwrap_or(0.0) == 0.0;
     let exact_match = exact_identity_match && variances.date_days == 0.0 && exact_balance_match;
 
@@ -1515,6 +1532,45 @@ fn status_rank(status: &ReconciliationMatchStatus) -> u8 {
     }
 }
 
+fn get_signal_deviation(signals: &[Signal], field: Field) -> Option<f32> {
+    signals
+        .iter()
+        .find(|signal| signal.field == field)
+        .map(|signal| signal.deviation)
+}
+
+fn is_balance_only_partial_for_realignment(recon: &ReconciliationResult) -> bool {
+    if recon.status != ReconciliationMatchStatus::PartialMatch {
+        return false;
+    }
+
+    const EPSILON: f32 = 0.0001;
+    let amount_ok = get_signal_deviation(&recon.signals, Field::Amount)
+        .is_some_and(|deviation| deviation.abs() <= EPSILON);
+    let side_ok = get_signal_deviation(&recon.signals, Field::Side)
+        .is_some_and(|deviation| deviation.abs() <= EPSILON);
+    let date_ok = get_signal_deviation(&recon.signals, Field::Date)
+        .is_some_and(|deviation| deviation.abs() <= EPSILON);
+    let description_ok = get_signal_deviation(&recon.signals, Field::Description)
+        .is_some_and(|deviation| deviation <= 0.5 + EPSILON);
+
+    amount_ok && side_ok && date_ok && description_ok
+}
+
+fn is_realignment_upgrade_candidate_item(
+    item: &ReconciliationItem,
+    eligible_reconciliation_ids: &HashSet<Uuid>,
+) -> bool {
+    match item {
+        ReconciliationItem::Reconciliation(recon) => {
+            eligible_reconciliation_ids.contains(&recon.transaction.id)
+        }
+        ReconciliationItem::Original(target) => target
+            .matched_reconciliation_id
+            .is_some_and(|id| eligible_reconciliation_ids.contains(&id)),
+    }
+}
+
 #[derive(Clone)]
 struct SameDayCandidateOption {
     input_idx: usize,
@@ -1560,7 +1616,7 @@ fn is_exact_identity_same_day_candidate(candidate: &MatchCandidate) -> bool {
     candidate.amount_variance == 0.0
         && candidate.side_variance == 0.0
         && candidate.date_days == 0.0
-        && candidate.description_variance <= 0.01
+        && candidate.description_variance <= 0.5
 }
 
 fn has_same_day_balance_set_support(
