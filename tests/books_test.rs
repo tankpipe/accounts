@@ -926,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reconcile_partial_match_date_variance() {
+    fn test_reconcile_matched_with_one_day_date_variance() {
         let (mut books, id1, id2) = setup_books();
         let t1 = build_transaction_with_date(
             Some(id1),
@@ -935,7 +935,7 @@ mod tests {
         );
         books.add_transaction(t1.clone()).unwrap();
 
-        // One day after book entry, same amount and description -> date within ±1 day, so 2 of 3 = PartialMatch
+        // One day after book entry, same amount/description/balance -> now Matched under ±1 day rule.
         let mut next_day = clone_transaction_for_reconcile(&t1);
         for e in &mut next_day.entries {
             if e.account_id == id2 {
@@ -949,13 +949,13 @@ mod tests {
         assert_eq!(2, results.len());
         match &results[0] {
             ReconciliationItem::Original(target) => {
-                assert_eq!(target.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(target.status, ReconciliationMatchStatus::Matched);
             }
             _ => panic!("expected original transaction"),
         }
         match &results[1] {
             ReconciliationItem::Reconciliation(recon) => {
-                assert_eq!(recon.status, ReconciliationMatchStatus::PartialMatch);
+                assert_eq!(recon.status, ReconciliationMatchStatus::Matched);
                 assert_eq!(recon.matched_transaction_id, Some(t1.id));
             }
             _ => panic!("expected reconciliation transaction"),
@@ -1133,7 +1133,7 @@ mod tests {
         let mut statement_t1 = clone_transaction_for_reconcile(&t1);
         for e in &mut statement_t1.entries {
             if e.account_id == id2 {
-                e.date = NaiveDate::from_ymd_opt(2022, 6, 5).unwrap(); // date deviation
+                e.date = NaiveDate::from_ymd_opt(2022, 6, 6).unwrap(); // 2-day deviation stays Partial
                 e.balance = Some(dec!(-10000)); // balance aligns, still Partial due to date
                 break;
             }
@@ -1607,6 +1607,55 @@ mod tests {
             .expect("exact statement row should exist");
 
         assert_eq!(exact_row_result.matched_transaction_id, Some(target.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_prefers_zero_day_over_one_day_when_identity_is_equal() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_zero_day = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 10).unwrap(),
+            "MERCHANT 12345",
+            dec!(120.00),
+            None,
+        );
+        let target_one_day = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 9).unwrap(),
+            "MERCHANT 12345",
+            dec!(120.00),
+            None,
+        );
+        books.add_transaction(target_one_day.clone()).unwrap();
+        books.add_transaction(target_zero_day.clone()).unwrap();
+
+        let statement_row = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 2, 10).unwrap(),
+            "MERCHANT 12345",
+            dec!(120.00),
+            Some(dec!(120.00)),
+        );
+        let statement_id = statement_row.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![statement_row])
+            .unwrap();
+
+        let statement_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == statement_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("statement row should exist");
+
+        assert_eq!(statement_result.status, ReconciliationMatchStatus::PartialMatch);
+        assert_eq!(statement_result.matched_transaction_id, Some(target_zero_day.id));
     }
 
     #[test]

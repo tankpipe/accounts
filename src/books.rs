@@ -1302,7 +1302,7 @@ fn evaluate_match_candidate(rec_entry: &Entry, target_entry: &Entry) -> Option<M
         && variances.date_days <= 1.0
         && variances.description <= 0.5;
     let exact_balance_match = variances.balance.unwrap_or(0.0) == 0.0;
-    let exact_match = exact_identity_match && variances.date_days == 0.0 && exact_balance_match;
+    let exact_match = exact_identity_match && variances.date_days <= 1.0 && exact_balance_match;
 
     // Balance drift should not overrule a clear identity match (amount+description+side+close date).
     let status = if exact_match {
@@ -1815,6 +1815,7 @@ fn select_same_day_set_matches(
 struct MatchPriority {
     status_rank: u8,
     amount_variance: f32,
+    side_variance: f32,
     description_variance: f32,
     date_days: f32,
     confidence: f32,
@@ -1826,6 +1827,7 @@ impl MatchPriority {
         Self {
             status_rank: status_rank(&candidate.status),
             amount_variance: candidate.amount_variance,
+            side_variance: candidate.side_variance,
             description_variance: candidate.description_variance,
             date_days: candidate.date_days,
             confidence: candidate.confidence,
@@ -1848,6 +1850,22 @@ fn cmp_match_priority(a: MatchPriority, b: MatchPriority) -> Ordering {
             lhs.total_cmp(&rhs)
         }
     };
+
+    let identity_desc_threshold = 0.75;
+    let same_identity_signature = a.amount_variance == 0.0
+        && b.amount_variance == 0.0
+        && a.side_variance == 0.0
+        && b.side_variance == 0.0
+        && a.description_variance <= identity_desc_threshold
+        && b.description_variance <= identity_desc_threshold
+        && a.date_days <= 1.0
+        && b.date_days <= 1.0;
+    if same_identity_signature {
+        let date_cmp = cmp_f32(a.date_days, b.date_days, true);
+        if date_cmp != Ordering::Equal {
+            return date_cmp;
+        }
+    }
 
     a.status_rank
         .cmp(&b.status_rank)
