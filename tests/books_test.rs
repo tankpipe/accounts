@@ -249,7 +249,54 @@ mod tests {
         let result = books.add_transaction(t2);
         assert!(result.is_err());
 
-        let error_msg = format!("Transactions can not be added earlier than the account reconciliation date. {} is before {}.", early_date, reconciliation_date);
+        let error_msg = format!("Transactions can not be added earlier than an account's reconciliation date. {} is before {}.", early_date, reconciliation_date);
+        assert_eq!(error_msg, result.err().unwrap().error);
+    }
+
+    #[test]
+    fn test_add_transaction_entry_before_reconciliation_date_rejected() {
+        let (mut books, account1_id, account2_id) = setup_books();
+
+        // Add a transaction and reconcile the account
+        let reconciliation_date = NaiveDate::from_ymd_opt(2022, 6, 4).unwrap();
+        let t1 =
+            build_transaction_with_date(Some(account1_id), Some(account2_id), reconciliation_date);
+        books.add_transaction(t1.clone()).unwrap();
+        books
+            .reconcile_account_transactions(account1_id, vec![t1.id])
+            .unwrap();
+
+        println!(
+            "Reconciled account {:?}",
+            books.get_account(&account1_id).unwrap()
+        );
+
+        // Try to add a transaction before the reconciliation date - should be rejected
+        let early_date = NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
+        //let t2 = build_transaction_with_date(Some(account1_id), Some(account2_id), early_date);
+        let t2 = build_transaction_with_date(Some(account2_id), None, early_date);
+        let t2_id  = t2.id;
+        let result = books.add_transaction(t2);
+        assert!(result.is_ok());
+
+        let new_entry = Entry {
+            id: Uuid::new_v4(),
+            transaction_id: t2_id,
+            account_id: account1_id,
+            amount: Decimal::from(100),
+            date: early_date,
+            description: "Test transaction".to_string(),
+            entry_type: Side::Credit,
+            balance: None,
+            reconciled_status: None,
+        };
+
+        let mut t2 = books.transaction(t2_id).unwrap();
+        t2.entries.push(new_entry);
+
+        let result = books.update_transaction(t2);
+        assert!(result.is_err());
+        let error_msg = format!("Transactions can not be added earlier than an account's reconciliation date. {} is before {}.", early_date, reconciliation_date);
         assert_eq!(error_msg, result.err().unwrap().error);
     }
 

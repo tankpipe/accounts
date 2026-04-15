@@ -269,18 +269,21 @@ impl Books {
 
         // If the transaction is net new,
         // or the original_transaction has entries that are not flaged as reconciled or outstanding,
-        // check that their dates are after their account's reconciliation date
+        // or the orginal_transaction does not have an entry
+        // check that the entrie's dates are after their account's reconciliation date
 
         let original_transaction = self.transactions.iter().find(|t| t.id == transaction.id);
 
         for entry in &transaction.entries {
-            // Check if this entry exists in original transaction as reconciled or outstanding
 
             if original_transaction.is_none_or(|original_transaction| {
-                original_transaction
+                let matching_entries: Vec<_> = original_transaction
                     .entries
                     .iter()
-                    .any(|e| e.account_id == entry.account_id && !e.is_reconciled_or_outstanding())
+                    .filter(|e| e.account_id == entry.account_id)
+                    .collect();
+
+                matching_entries.is_empty() || matching_entries.iter().any(|e| !e.is_reconciled_or_outstanding())
             }) {
                 // Check if account exists and has reconciliation info
                 if let Some(account) = self.accounts.get(&entry.account_id) {
