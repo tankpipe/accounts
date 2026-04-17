@@ -1053,8 +1053,8 @@ impl Books {
         transaction_ids: Vec<Uuid>,
     ) -> Result<(), BooksError> {
         println!(
-            "Reconciling account transactions for account {} transactions: {:?}",
-            account_id, transaction_ids
+            "Reconciling account transactions for account {}",
+            account_id,
         );
         if !self.accounts.contains_key(&account_id) {
             return Err(books_error!("errors.account_not_found", id => account_id));
