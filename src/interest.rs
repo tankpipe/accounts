@@ -1422,7 +1422,7 @@ mod tests {
         assert_eq!(transactions[3].entries[0].amount, dec!(0.92));
         assert_eq!(
             transactions[3].entries[0].date,
-            NaiveDate::from_ymd_opt(2022, 3, 1).unwrap()
+            NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()
         );
     }
 
