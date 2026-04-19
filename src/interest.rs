@@ -39,6 +39,7 @@ pub struct InterestTerms {
     pub max_balance: Option<Decimal>,
     pub period: ScheduleEnum,
     pub frequency: i32,
+    pub period_start_day: i32,
     pub paid_day: i32,
     pub description: String,
     pub income_account_id: Option<Uuid>, // Revenue or expense account to post interest against
@@ -66,6 +67,7 @@ impl InterestTerms {
             max_balance: None,
             period,
             frequency,
+            period_start_day: 1,
             paid_day,
             description,
             income_account_id,
@@ -97,6 +99,7 @@ impl InterestTerms {
             max_balance,
             period,
             frequency,
+            period_start_day: 1,
             paid_day,
             description,
             income_account_id,
