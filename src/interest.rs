@@ -67,7 +67,7 @@ impl InterestTerms {
             max_balance: None,
             period,
             frequency,
-            period_start_day: 1,
+            period_start_day: paid_day,
             paid_day,
             description,
             income_account_id,
@@ -99,7 +99,7 @@ impl InterestTerms {
             max_balance,
             period,
             frequency,
-            period_start_day: 1,
+            period_start_day: paid_day,
             paid_day,
             description,
             income_account_id,
@@ -108,21 +108,17 @@ impl InterestTerms {
     }
 
     pub fn is_end_of_interest_period(&self, date: NaiveDate) -> bool {
-        let first_of_next_month = if date.month() == 12 {
-            NaiveDate::from_ymd_opt(date.year() + 1, 1, 1).unwrap()
+        let next_day = date.succ_opt().unwrap();
+        let first_of_month_after_next_day = if next_day.month() == 12 {
+            NaiveDate::from_ymd_opt(next_day.year() + 1, 1, 1).unwrap()
         } else {
-            NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap()
+            NaiveDate::from_ymd_opt(next_day.year(), next_day.month() + 1, 1).unwrap()
         };
-        let last_day_of_month = first_of_next_month.pred_opt().unwrap().day();
-        let paid_day_for_month = (self.paid_day.max(1) as u32).min(last_day_of_month);
+        let last_day_of_next_day_month = first_of_month_after_next_day.pred_opt().unwrap().day();
+        let period_start_day_for_next_day_month =
+            (self.period_start_day.max(1) as u32).min(last_day_of_next_day_month);
 
-        let paid_to_day = if paid_day_for_month > 1 {
-            paid_day_for_month - 1
-        } else {
-            last_day_of_month
-        };
-
-        date.day() == paid_to_day
+        next_day.day() == period_start_day_for_next_day_month
     }
 }
 
@@ -436,7 +432,7 @@ pub fn calculate_interest_for_accounts(
                         .or_insert(dec!(0));
                     let new_total = *current_balance + interest_amount;
                     *current_balance = new_total;
-                    println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
+                    //println!("{}, {}, {}, Interest amount: {}, tally {}", cur_date, state.account.name, current_balance, interest_amount, new_total);
                 }
             }
 
@@ -1888,6 +1884,44 @@ mod tests {
     }
 
     #[test]
+    fn test_is_end_of_month_uses_period_start_day_not_paid_day() {
+        let mut terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1, // paid_day intentionally different to verify it is ignored here
+            "Test".to_string(),
+            None,
+        );
+        terms.period_start_day = 15;
+
+        // end = period_start_day + 1 month - 1 day, so Jan period ends on the 14th
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 14).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()));
+    }
+
+    #[test]
+    fn test_is_end_of_month_period_start_day_31_short_month() {
+        let mut terms = InterestTerms::simple(
+            NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
+            dec!(0.05),
+            InterestType::Daily,
+            ScheduleEnum::Months,
+            1,
+            1,
+            "Test".to_string(),
+            None,
+        );
+        terms.period_start_day = 31;
+
+        // For February non-leap, next period start clamps to Feb 28, so end is Feb 27.
+        assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 27).unwrap()));
+        assert!(!terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()));
+    }
+
+    #[test]
     fn test_is_end_of_month_paid_day_1() {
         let terms = InterestTerms::simple(
             NaiveDate::from_ymd_opt(2022, 1, 1).unwrap(),
@@ -1900,7 +1934,8 @@ mod tests {
             None,
         );
 
-        // With paid_day = 1, period end should be the last day of month.
+        // With paid_day = 1, paid_to_day = 31, so should trigger on last day of month
+        // or when next day is 1st of month
         assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 1, 31).unwrap()));
         assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 2, 28).unwrap()));
         assert!(terms.is_end_of_interest_period(NaiveDate::from_ymd_opt(2022, 4, 30).unwrap()));
