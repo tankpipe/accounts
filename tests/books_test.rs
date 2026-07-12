@@ -1876,7 +1876,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_reconciliation_same_day_exact_identity_without_balance_support_stays_partial() {
+    fn test_prepare_reconciliation_same_day_exact_identity_without_balance_support_auto_matches() {
         let (mut books, account_id, _other_account_id) = setup_books();
 
         let target_a = build_single_entry_transaction(
@@ -1938,10 +1938,204 @@ mod tests {
             .next()
             .expect("recon_b row should exist");
 
-        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::PartialMatch);
-        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::PartialMatch);
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
         assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
         assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_three_same_day_exact_descriptions_do_not_rotate() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275455",
+            dec!(279.04),
+            None,
+        );
+        let target_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275456",
+            dec!(279.04),
+            None,
+        );
+        let target_c = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275457",
+            dec!(279.04),
+            None,
+        );
+        books.add_transaction(target_a.clone()).unwrap();
+        books.add_transaction(target_b.clone()).unwrap();
+        books.add_transaction(target_c.clone()).unwrap();
+        let recon_c = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275457",
+            dec!(279.04),
+            Some(dec!(558.08)),
+        );
+        let recon_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275456",
+            dec!(279.04),
+            Some(dec!(279.04)),
+        );
+        let recon_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275455",
+            dec!(279.04),
+            Some(dec!(837.12)),
+        );
+
+        let recon_a_id = recon_a.id;
+        let recon_b_id = recon_b.id;
+        let recon_c_id = recon_c.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![recon_c, recon_b, recon_a])
+            .unwrap();
+
+        let recon_a_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_a_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_a row should exist");
+        let recon_b_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_b_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_b row should exist");
+        let recon_c_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_c_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_c row should exist");
+
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_c_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
+        assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
+        assert_eq!(recon_c_result.matched_transaction_id, Some(target_c.id));
+    }
+
+    #[test]
+    fn test_prepare_reconciliation_same_day_rotated_balances_still_follow_exact_descriptions() {
+        let (mut books, account_id, _other_account_id) = setup_books();
+
+        let target_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275455",
+            dec!(279.04),
+            None,
+        );
+        let target_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275456",
+            dec!(279.04),
+            None,
+        );
+        let target_c = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275457",
+            dec!(279.04),
+            None,
+        );
+        books.add_transaction(target_a.clone()).unwrap();
+        books.add_transaction(target_b.clone()).unwrap();
+        books.add_transaction(target_c.clone()).unwrap();
+        let recon_c = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275457",
+            dec!(279.04),
+            Some(dec!(37_997.57)),
+        );
+        let recon_b = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275456",
+            dec!(279.04),
+            Some(dec!(37_718.53)),
+        );
+        let recon_a = build_single_entry_transaction(
+            account_id,
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            "DIRECT DEBIT Qld Urban Util 10275455",
+            dec!(279.04),
+            Some(dec!(37_439.49)),
+        );
+
+        let recon_a_id = recon_a.id;
+        let recon_b_id = recon_b.id;
+        let recon_c_id = recon_c.id;
+
+        let results = books
+            .prepare_reconciliation(account_id, vec![recon_c, recon_b, recon_a])
+            .unwrap();
+
+        let recon_a_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_a_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_a row should exist");
+        let recon_b_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_b_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_b row should exist");
+        let recon_c_result = results
+            .iter()
+            .filter_map(|item| match item {
+                ReconciliationItem::Reconciliation(recon) => {
+                    (recon.transaction.id == recon_c_id).then_some(recon)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("recon_c row should exist");
+
+        assert_eq!(recon_a_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_b_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_c_result.status, ReconciliationMatchStatus::Matched);
+        assert_eq!(recon_a_result.matched_transaction_id, Some(target_a.id));
+        assert_eq!(recon_b_result.matched_transaction_id, Some(target_b.id));
+        assert_eq!(recon_c_result.matched_transaction_id, Some(target_c.id));
     }
 
     fn clone_transaction_for_reconcile(t: &Transaction) -> Transaction {

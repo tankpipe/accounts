@@ -1598,6 +1598,15 @@ struct PreselectedSameDayMatch {
 }
 
 fn score_candidate_for_set_matching(candidate: &MatchCandidate) -> i64 {
+    let exact_same_day_identity_bonus = if candidate.amount_variance == 0.0
+        && candidate.side_variance == 0.0
+        && candidate.date_days == 0.0
+        && candidate.description_variance == 0.0
+    {
+        10_000_000_000
+    } else {
+        0
+    };
     let amount_score = ((1.0 - candidate.amount_variance).clamp(0.0, 1.0) * 1_000_000.0) as i64;
     let description_score =
         ((1.0 - candidate.description_variance).clamp(0.0, 1.0) * 100_000.0) as i64;
@@ -1607,7 +1616,8 @@ fn score_candidate_for_set_matching(candidate: &MatchCandidate) -> i64 {
         .balance_variance
         .map(|b| ((1.0 - b).clamp(0.0, 1.0) * 100.0) as i64)
         .unwrap_or(0);
-    (status_rank(&candidate.status) as i64) * 1_000_000_000
+    exact_same_day_identity_bonus
+        + (status_rank(&candidate.status) as i64) * 1_000_000_000
         + amount_score
         + description_score
         + date_score
@@ -1620,41 +1630,6 @@ fn is_exact_identity_same_day_candidate(candidate: &MatchCandidate) -> bool {
         && candidate.side_variance == 0.0
         && candidate.date_days == 0.0
         && candidate.description_variance <= 0.5
-}
-
-fn has_same_day_balance_set_support(
-    picks: &[SameDayCandidateOption],
-    input_txns: &[Transaction],
-    existing_targets: &[(usize, Uuid, Entry)],
-    account_id: Uuid,
-) -> bool {
-    let target_by_idx: HashMap<usize, &Entry> = existing_targets
-        .iter()
-        .map(|(idx, _, entry)| (*idx, entry))
-        .collect();
-
-    let mut input_balances: Vec<Decimal> = Vec::with_capacity(picks.len());
-    let mut target_balances: Vec<Decimal> = Vec::with_capacity(picks.len());
-
-    for pick in picks {
-        let input_balance = input_txns[pick.input_idx]
-            .find_entry_by_account(&account_id)
-            .and_then(|entry| entry.balance);
-        let target_balance = target_by_idx
-            .get(&pick.target_idx)
-            .and_then(|entry| entry.balance);
-
-        let (Some(input_balance), Some(target_balance)) = (input_balance, target_balance) else {
-            return false;
-        };
-
-        input_balances.push(input_balance);
-        target_balances.push(target_balance);
-    }
-
-    input_balances.sort();
-    target_balances.sort();
-    input_balances == target_balances
 }
 
 fn search_best_same_day_assignment(
@@ -1789,13 +1764,7 @@ fn select_same_day_set_matches(
             && best
                 .picks
                 .iter()
-                .all(|pick| is_exact_identity_same_day_candidate(&pick.candidate))
-            && has_same_day_balance_set_support(
-                &best.picks,
-                input_txns,
-                existing_targets,
-                account_id,
-            );
+                .all(|pick| is_exact_identity_same_day_candidate(&pick.candidate));
 
         for pick in best.picks {
             matched_indices.insert(pick.target_idx);
